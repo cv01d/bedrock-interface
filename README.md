@@ -1,6 +1,6 @@
 # Bedrock LLM-Interface
 
-A small local chat interface for Amazon Bedrock. Pick any Bedrock model, organize
+A small extremely simple local chat interface for Amazon Bedrock. Pick any Bedrock model, organize
 chats under projects (system prompt + project data + rolling memory), and let the
 model search your past chats with a built-in tool. All chat history and credentials
 are encrypted at rest in SQLite.
@@ -55,18 +55,6 @@ to use in the Bedrock console.
 > Some accounts now enforce the dedicated `bedrock:Converse` / `bedrock:ConverseStream`
 > actions (this app uses the Converse API). If you scope IAM tightly, include those two
 > alongside the `InvokeModel*` actions.
-
-## Troubleshooting
-
-- **`ValidationException: Operation not allowed` on every model** — your AWS account can
-  *list* models but isn't enabled to *invoke* them. This is account-side, not a code or
-  IAM-permission bug (it also happens with `bedrock:InvokeModel` granted). Fix it in the
-  Bedrock console → **Model access** (in your region) by enabling the models, and make sure
-  the account is fully activated (payment method / identity verification). Brand-new or
-  sandboxed accounts commonly hit this until activation completes.
-- **`… isn't supported … inference profile`** — pick the cross-region ("US …") variant.
-- **Use `us-east-1` or `us-west-2`** — these have the widest Bedrock model availability;
-  smaller regions (e.g. `us-east-2`) expose few or no on-demand models.
 
 ## Project layout
 
