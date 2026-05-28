@@ -1,4 +1,4 @@
-# Bedrock Chat
+# Bedrock LLM-Interface
 
 A small local chat interface for Amazon Bedrock. Pick any Bedrock model, organize
 chats under projects (system prompt + project data + rolling memory), and let the
