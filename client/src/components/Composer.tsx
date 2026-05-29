@@ -28,7 +28,13 @@ export function Composer({
   busy: boolean;
   canSummarize: boolean;
   projectLocked: boolean;
-  usage: { costUsd: number; inputTokens: number; outputTokens: number };
+  usage: {
+    costUsd: number;
+    inputTokens: number;
+    outputTokens: number;
+    cacheReadTokens: number;
+    cacheWriteTokens: number;
+  };
 }) {
   const model = models.find((m) => m.id === selectedModelId);
   const fmtCost = (n: number) =>
@@ -129,11 +135,14 @@ export function Composer({
         <span
           className="cost-ticker"
           title={
-            model
+            (model
               ? `Running cost & token usage for this chat.\n${model.label}: $${model.inputPer1M}/1M in, $${model.outputPer1M}/1M out${
                   model.estimatedPrice ? " (estimated)" : ""
                 }`
-              : "Running cost & token usage for this chat"
+              : "Running cost & token usage for this chat") +
+            `\nLast turn cache: ${fmtTok(usage.cacheReadTokens)} read / ${fmtTok(
+              usage.cacheWriteTokens
+            )} write tok`
           }
         >
           {model?.estimatedPrice ? "~" : ""}

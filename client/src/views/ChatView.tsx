@@ -27,7 +27,13 @@ export function ChatView() {
   const [toolStatus, setToolStatus] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [banner, setBanner] = useState<string | null>(null);
-  const [usage, setUsage] = useState({ costUsd: 0, inputTokens: 0, outputTokens: 0 });
+  const [usage, setUsage] = useState({
+    costUsd: 0,
+    inputTokens: 0,
+    outputTokens: 0,
+    cacheReadTokens: 0,
+    cacheWriteTokens: 0,
+  });
   const [editingChatId, setEditingChatId] = useState<number | null>(null);
   const [editingTitle, setEditingTitle] = useState("");
 
@@ -53,6 +59,8 @@ export function ChatView() {
       costUsd: chat.costUsd,
       inputTokens: chat.inputTokens,
       outputTokens: chat.outputTokens,
+      cacheReadTokens: 0,
+      cacheWriteTokens: 0,
     });
   };
 
@@ -63,7 +71,13 @@ export function ChatView() {
     setMessages([]);
     setStreamingText(null);
     setToolStatus(null);
-    setUsage({ costUsd: 0, inputTokens: 0, outputTokens: 0 });
+    setUsage({
+      costUsd: 0,
+      inputTokens: 0,
+      outputTokens: 0,
+      cacheReadTokens: 0,
+      cacheWriteTokens: 0,
+    });
   };
 
   const commitRename = async () => {
@@ -140,6 +154,8 @@ export function ChatView() {
       stopReason: null,
       inputTokens: null,
       outputTokens: null,
+      cacheReadTokens: null,
+      cacheWriteTokens: null,
       createdAt: new Date().toISOString(),
     };
     setMessages((prev) => [...prev, optimistic]);
@@ -152,6 +168,7 @@ export function ChatView() {
         text,
         attachmentIds: attachments.map((a) => a.id),
         enableTools: model?.supportsTools ?? false,
+        enableCaching: model?.supportsCaching ?? false,
       },
       (event) => {
         switch (event.type) {
@@ -187,6 +204,8 @@ export function ChatView() {
               costUsd: event.chatCostUsd,
               inputTokens: event.chatInputTokens,
               outputTokens: event.chatOutputTokens,
+              cacheReadTokens: event.cacheReadTokens,
+              cacheWriteTokens: event.cacheWriteTokens,
             });
             loadChats();
             break;

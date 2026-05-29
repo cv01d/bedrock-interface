@@ -19,6 +19,21 @@ function toolAndDocSupport(modelId: string, provider: string): boolean {
   return p.includes("anthropic") || id.includes("nova");
 }
 
+// Prompt caching is supported on Anthropic Claude 3.5 Sonnet v2, 3.7 Sonnet,
+// and the 4.x family (Opus/Sonnet/Haiku), plus Amazon Nova text models. Sending
+// cachePoint blocks to any other model raises a ValidationException, so be
+// conservative here. (Per AWS docs; 3.5 Haiku is NOT supported.)
+function cachingSupport(modelId: string, provider: string): boolean {
+  const id = modelId.toLowerCase();
+  if (provider.toLowerCase().includes("anthropic")) {
+    if (/claude-3-7|claude-sonnet-4|claude-opus-4|claude-haiku-4/.test(id)) {
+      return true;
+    }
+    return /claude-3-5-sonnet/.test(id) && id.includes("v2");
+  }
+  return /nova-(micro|lite|pro)/.test(id);
+}
+
 function isTextOutput(m: FoundationModelSummary): boolean {
   return (m.outputModalities ?? []).includes("TEXT");
 }
@@ -98,6 +113,7 @@ export async function listModels(): Promise<ModelInfo[]> {
       supportsTools: toolAndDocSupport(m.modelId, provider),
       supportsVision: hasVision(m),
       supportsDocuments: toolAndDocSupport(m.modelId, provider),
+      supportsCaching: cachingSupport(m.modelId, provider),
       isInferenceProfile: false,
       crossRegion: false,
       inputPer1M: rate.inputPer1M,
@@ -134,6 +150,7 @@ export async function listModels(): Promise<ModelInfo[]> {
       supportsDocuments: base
         ? toolAndDocSupport(base.modelId ?? id, provider)
         : provider.toLowerCase().includes("anthropic"),
+      supportsCaching: cachingSupport(base?.modelId ?? id, provider),
       isInferenceProfile: true,
       crossRegion: true,
       inputPer1M: rate.inputPer1M,

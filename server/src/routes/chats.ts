@@ -145,6 +145,7 @@ chatsRouter.post("/:id/messages", async (req, res) => {
       maxTokens: 4096,
       maxMessages: settings.contextSize,
       includeSearchTool: body.enableTools !== false,
+      includeCaching: body.enableCaching === true,
       emit: (e) => {
         if (!aborted) sse.send(e);
       },
@@ -155,6 +156,8 @@ chatsRouter.post("/:id/messages", async (req, res) => {
       stopReason: result.stopReason,
       inputTokens: result.inputTokens,
       outputTokens: result.outputTokens,
+      cacheReadTokens: result.cacheReadTokens,
+      cacheWriteTokens: result.cacheWriteTokens,
       chatCostUsd: usage.costUsd,
       chatInputTokens: usage.inputTokens,
       chatOutputTokens: usage.outputTokens,

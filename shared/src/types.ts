@@ -26,6 +26,8 @@ export interface Message {
   stopReason: string | null;
   inputTokens: number | null;
   outputTokens: number | null;
+  cacheReadTokens: number | null;
+  cacheWriteTokens: number | null;
   createdAt: string;
 }
 
@@ -87,6 +89,9 @@ export interface ModelInfo {
   supportsTools: boolean;
   supportsVision: boolean;
   supportsDocuments: boolean;
+  // Prompt caching is only supported on a subset of models; sending cachePoint
+  // blocks to others throws a ValidationException, so this gates it.
+  supportsCaching: boolean;
   isInferenceProfile: boolean;
   // Cross-region inference profiles route outside the home region and are
   // rejected with "Operation not allowed" on sandboxed/restricted accounts.
@@ -126,6 +131,8 @@ export type SSEEvent =
       stopReason: string;
       inputTokens: number; // this turn
       outputTokens: number; // this turn
+      cacheReadTokens: number; // this turn — input tokens served from cache
+      cacheWriteTokens: number; // this turn — input tokens written to cache
       chatCostUsd: number; // new running total for the chat after this turn
       chatInputTokens: number; // chat total
       chatOutputTokens: number; // chat total
@@ -140,4 +147,8 @@ export interface SendMessageBody {
   // the server omits the history-search tool to avoid a ValidationException
   // from tool-incapable models.
   enableTools?: boolean;
+  // Client sets this from the selected model's `supportsCaching`. When true,
+  // the server inserts cachePoint blocks so repeated prefixes (system prompt,
+  // tools, history) are served from Bedrock's prompt cache.
+  enableCaching?: boolean;
 }

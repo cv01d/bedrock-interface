@@ -24,12 +24,18 @@ export function buildSystemText(opts: {
 }): string {
   const parts: string[] = [];
 
-  const nowLocal = new Date().toLocaleString("en-US", {
+  // Date only (no time): a per-second timestamp here would change the system
+  // prefix on every request and defeat Bedrock prompt caching (which matches a
+  // stable prefix within a ~5-minute TTL). Day-level granularity is enough for
+  // the model's temporal awareness and keeps the cached prefix stable.
+  const nowLocal = new Date().toLocaleDateString("en-US", {
     timeZone: opts.settings.timezone || "UTC",
+    weekday: "long",
+    year: "numeric",
+    month: "long",
+    day: "numeric",
   });
-  parts.push(
-    `Current date/time (${opts.settings.timezone || "UTC"}): ${nowLocal}`
-  );
+  parts.push(`Current date (${opts.settings.timezone || "UTC"}): ${nowLocal}`);
 
   if (opts.snapshot.trim()) parts.push(opts.snapshot.trim());
 

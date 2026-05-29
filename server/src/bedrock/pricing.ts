@@ -48,15 +48,32 @@ export function priceFor(modelId: string): Rate {
   return { inputPer1M: 0.5, outputPer1M: 1.5, estimated: true };
 }
 
-// Cost in USD for a single turn's token usage.
+// Prompt-cache pricing multipliers relative to the base input rate: reads are
+// heavily discounted, 5-minute writes carry a surcharge. (1-hour writes cost
+// more, but we don't use the 1h TTL.)
+const CACHE_READ_MULT = 0.1;
+const CACHE_WRITE_MULT = 1.25;
+
+// Cost in USD for a single turn's token usage, including prompt-cache reads and
+// writes (which Bedrock bills separately from inputTokens).
 export function costFor(
   modelId: string | null,
   inputTokens: number | null,
-  outputTokens: number | null
+  outputTokens: number | null,
+  cacheReadTokens: number | null = 0,
+  cacheWriteTokens: number | null = 0
 ): number {
   if (!modelId) return 0;
   const rate = priceFor(modelId);
   const inTok = inputTokens ?? 0;
   const outTok = outputTokens ?? 0;
-  return (inTok * rate.inputPer1M + outTok * rate.outputPer1M) / 1_000_000;
+  const readTok = cacheReadTokens ?? 0;
+  const writeTok = cacheWriteTokens ?? 0;
+  return (
+    (inTok * rate.inputPer1M +
+      readTok * rate.inputPer1M * CACHE_READ_MULT +
+      writeTok * rate.inputPer1M * CACHE_WRITE_MULT +
+      outTok * rate.outputPer1M) /
+    1_000_000
+  );
 }

@@ -331,8 +331,19 @@ function usageOf(messages: Message[]): ChatUsage {
   let inputTokens = 0;
   let outputTokens = 0;
   for (const m of messages) {
-    costUsd += costFor(m.modelId, m.inputTokens, m.outputTokens);
-    inputTokens += m.inputTokens ?? 0;
+    costUsd += costFor(
+      m.modelId,
+      m.inputTokens,
+      m.outputTokens,
+      m.cacheReadTokens,
+      m.cacheWriteTokens
+    );
+    // Bedrock splits input across uncached / cache-read / cache-write; sum all
+    // three so the "in" count reflects the true prompt size.
+    inputTokens +=
+      (m.inputTokens ?? 0) +
+      (m.cacheReadTokens ?? 0) +
+      (m.cacheWriteTokens ?? 0);
     outputTokens += m.outputTokens ?? 0;
   }
   return { costUsd, inputTokens, outputTokens };
@@ -411,6 +422,8 @@ interface MessageRow {
   stop_reason: string | null;
   input_tokens: number | null;
   output_tokens: number | null;
+  cache_read_tokens: number | null;
+  cache_write_tokens: number | null;
   created_at: string;
 }
 
@@ -431,6 +444,8 @@ function rowToMessage(r: MessageRow): Message {
     stopReason: r.stop_reason,
     inputTokens: r.input_tokens,
     outputTokens: r.output_tokens,
+    cacheReadTokens: r.cache_read_tokens,
+    cacheWriteTokens: r.cache_write_tokens,
     createdAt: r.created_at,
   };
 }
@@ -457,14 +472,17 @@ export function addMessage(input: {
   stopReason?: string | null;
   inputTokens?: number | null;
   outputTokens?: number | null;
+  cacheReadTokens?: number | null;
+  cacheWriteTokens?: number | null;
 }): Message {
   const ts = now();
   const seq = nextSeq(input.chatId);
   const info = db
     .prepare(
       `INSERT INTO messages
-         (chat_id, seq, role, model_id, stop_reason, input_tokens, output_tokens, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+         (chat_id, seq, role, model_id, stop_reason, input_tokens, output_tokens,
+          cache_read_tokens, cache_write_tokens, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     )
     .run(
       input.chatId,
@@ -474,6 +492,8 @@ export function addMessage(input: {
       input.stopReason ?? null,
       input.inputTokens ?? null,
       input.outputTokens ?? null,
+      input.cacheReadTokens ?? null,
+      input.cacheWriteTokens ?? null,
       ts
     );
   const id = Number(info.lastInsertRowid);
@@ -492,6 +512,8 @@ export function addMessage(input: {
     stopReason: input.stopReason ?? null,
     inputTokens: input.inputTokens ?? null,
     outputTokens: input.outputTokens ?? null,
+    cacheReadTokens: input.cacheReadTokens ?? null,
+    cacheWriteTokens: input.cacheWriteTokens ?? null,
     createdAt: ts,
   };
 }

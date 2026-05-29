@@ -46,6 +46,8 @@ export interface StreamResult {
   stopReason: string;
   inputTokens: number;
   outputTokens: number;
+  cacheReadTokens: number;
+  cacheWriteTokens: number;
 }
 
 // Drives a streaming chat turn, including the tool-use loop. Persists every
@@ -59,16 +61,29 @@ export async function streamChat(opts: {
   maxTokens: number;
   maxMessages: number;
   includeSearchTool: boolean;
+  includeCaching: boolean;
   emit: (e: SSEEvent) => void;
 }): Promise<StreamResult> {
   const client = getRuntimeClient();
 
+  // A cachePoint marks the end of a cacheable prefix. We place them after the
+  // system prompt, after the tools, and at the end of the conversation so that
+  // repeated prefixes are served from Bedrock's prompt cache. Only enabled for
+  // models that support it (see ModelInfo.supportsCaching).
+  const cachePoint = { cachePoint: { type: "default" as const } };
+
   const system: SystemContentBlock[] | undefined = opts.systemText
-    ? [{ text: opts.systemText }]
+    ? opts.includeCaching
+      ? [{ text: opts.systemText }, cachePoint]
+      : [{ text: opts.systemText }]
     : undefined;
 
   const toolConfig: ToolConfiguration | undefined = opts.includeSearchTool
-    ? { tools: [searchHistoryTool] }
+    ? {
+        tools: opts.includeCaching
+          ? [searchHistoryTool, cachePoint]
+          : [searchHistoryTool],
+      }
     : undefined;
 
   // Seed the conversation from persisted history (already includes the new
@@ -77,8 +92,18 @@ export async function streamChat(opts: {
     trimHistory(getMessages(opts.chatId), opts.maxMessages)
   );
 
+  // Cache the conversation prefix too (everything through the latest user
+  // message). On the next turn this prefix is reused. Appended once here; the
+  // tool-use loop adds new messages after it, keeping us within the 4-point cap.
+  if (opts.includeCaching && convo.length > 0) {
+    const last = convo[convo.length - 1];
+    last.content = [...(last.content ?? []), cachePoint];
+  }
+
   let totalInput = 0;
   let totalOutput = 0;
+  let totalCacheRead = 0;
+  let totalCacheWrite = 0;
   let lastStopReason = "end_turn";
 
   for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
@@ -99,6 +124,8 @@ export async function streamChat(opts: {
     let stopReason = "end_turn";
     let roundInput = 0;
     let roundOutput = 0;
+    let roundCacheRead = 0;
+    let roundCacheWrite = 0;
 
     for await (const chunk of res.stream ?? []) {
       if (chunk.messageStart) {
@@ -137,13 +164,18 @@ export async function streamChat(opts: {
       } else if (chunk.messageStop) {
         stopReason = chunk.messageStop.stopReason ?? "end_turn";
       } else if (chunk.metadata?.usage) {
-        roundInput += chunk.metadata.usage.inputTokens ?? 0;
-        roundOutput += chunk.metadata.usage.outputTokens ?? 0;
+        const u = chunk.metadata.usage;
+        roundInput += u.inputTokens ?? 0;
+        roundOutput += u.outputTokens ?? 0;
+        roundCacheRead += u.cacheReadInputTokens ?? 0;
+        roundCacheWrite += u.cacheWriteInputTokens ?? 0;
       }
     }
 
     totalInput += roundInput;
     totalOutput += roundOutput;
+    totalCacheRead += roundCacheRead;
+    totalCacheWrite += roundCacheWrite;
     lastStopReason = stopReason;
 
     // Reconstruct the assistant message blocks in index order.
@@ -184,6 +216,8 @@ export async function streamChat(opts: {
       stopReason,
       inputTokens: roundInput,
       outputTokens: roundOutput,
+      cacheReadTokens: roundCacheRead,
+      cacheWriteTokens: roundCacheWrite,
     });
     opts.emit({ type: "message_saved", message: savedAssistant });
     convo.push({
@@ -237,6 +271,8 @@ export async function streamChat(opts: {
     stopReason: lastStopReason,
     inputTokens: totalInput,
     outputTokens: totalOutput,
+    cacheReadTokens: totalCacheRead,
+    cacheWriteTokens: totalCacheWrite,
   };
 }
 
