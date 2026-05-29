@@ -42,6 +42,18 @@ function stripGeoPrefix(id: string): string {
   return id;
 }
 
+// Inference-profile display names are prefixed with a geo region and provider,
+// e.g. "US Anthropic Claude 3.5 Sonnet". Drop that noise for a cleaner label.
+function cleanProfileName(name: string): string {
+  return name
+    .replace(/^(US-Gov|US|EU|APAC|Global)\s+/i, "")
+    .replace(
+      /^(Anthropic|Amazon|Meta|Mistral AI|Mistral|Cohere|AI21 Labs|AI21|Stability AI|Stability|DeepSeek|Writer|TwelveLabs|Luma)\s+/i,
+      ""
+    )
+    .trim();
+}
+
 const NON_TEXT_RE =
   /embed|image|stable|pegasus|upscale|inpaint|outpaint|background|sketch|recolor|rerank|video|canvas|reranker/i;
 
@@ -98,10 +110,11 @@ export async function listModels(): Promise<ModelInfo[]> {
   for (const p of profRes.inferenceProfileSummaries ?? []) {
     const id = p.inferenceProfileId;
     if (!id) continue;
-    const label = p.inferenceProfileName ?? id;
+    const rawName = p.inferenceProfileName ?? id;
     // Drop chat-incompatible profiles (embeddings, image/video) by name, and —
     // when we can resolve the underlying model — also require text output.
-    if (NON_TEXT_RE.test(label)) continue;
+    if (NON_TEXT_RE.test(rawName)) continue;
+    const label = cleanProfileName(rawName);
     const baseFromArn = modelIdFromArn(p.models?.[0]?.modelArn);
     const base =
       (baseFromArn && byId.get(baseFromArn)) || byId.get(stripGeoPrefix(id));

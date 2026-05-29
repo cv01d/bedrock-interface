@@ -251,9 +251,11 @@ export function ChatView() {
         )}
 
         <MessageList
+          key={activeChatId ?? "new"}
           messages={messages}
           streamingText={streamingText}
           toolStatus={toolStatus}
+          models={models}
         />
 
         <Composer
