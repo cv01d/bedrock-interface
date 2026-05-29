@@ -28,6 +28,8 @@ export function ChatView() {
   const [busy, setBusy] = useState(false);
   const [banner, setBanner] = useState<string | null>(null);
   const [usage, setUsage] = useState({ costUsd: 0, inputTokens: 0, outputTokens: 0 });
+  const [editingChatId, setEditingChatId] = useState<number | null>(null);
+  const [editingTitle, setEditingTitle] = useState("");
 
   useEffect(() => {
     loadChats();
@@ -62,6 +64,17 @@ export function ChatView() {
     setStreamingText(null);
     setToolStatus(null);
     setUsage({ costUsd: 0, inputTokens: 0, outputTokens: 0 });
+  };
+
+  const commitRename = async () => {
+    if (editingChatId == null) return;
+    const id = editingChatId;
+    const title = editingTitle.trim();
+    setEditingChatId(null);
+    if (title) {
+      await api.updateChat(id, { title });
+      loadChats();
+    }
   };
 
   const onSelectModel = async (id: string) => {
@@ -209,24 +222,58 @@ export function ChatView() {
               className={`list-item ${c.id === activeChatId ? "active" : ""}`}
               onClick={() => selectChat(c.id)}
             >
-              <div style={{ minWidth: 0 }}>
-                <div className="title">{c.title}</div>
+              <div style={{ minWidth: 0, flex: 1 }}>
+                {editingChatId === c.id ? (
+                  <input
+                    className="rename-input"
+                    autoFocus
+                    value={editingTitle}
+                    onClick={(e) => e.stopPropagation()}
+                    onChange={(e) => setEditingTitle(e.target.value)}
+                    onBlur={commitRename}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") {
+                        e.preventDefault();
+                        commitRename();
+                      } else if (e.key === "Escape") {
+                        e.preventDefault();
+                        setEditingChatId(null);
+                      }
+                    }}
+                  />
+                ) : (
+                  <div className="title">{c.title}</div>
+                )}
                 <div className="sub">
                   {projects.find((p) => p.id === c.projectId)?.name ?? "—"}
                 </div>
               </div>
-              <button
-                className="danger"
-                style={{ border: "none", background: "none", padding: 2 }}
-                onClick={async (e) => {
-                  e.stopPropagation();
-                  await api.deleteChat(c.id);
-                  if (c.id === activeChatId) newChat();
-                  loadChats();
-                }}
-              >
-                ✕
-              </button>
+              <div className="item-actions">
+                <button
+                  title="Rename chat"
+                  style={{ border: "none", background: "none", padding: 2 }}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setEditingChatId(c.id);
+                    setEditingTitle(c.title);
+                  }}
+                >
+                  ✎
+                </button>
+                <button
+                  className="danger"
+                  title="Delete chat"
+                  style={{ border: "none", background: "none", padding: 2 }}
+                  onClick={async (e) => {
+                    e.stopPropagation();
+                    await api.deleteChat(c.id);
+                    if (c.id === activeChatId) newChat();
+                    loadChats();
+                  }}
+                >
+                  ✕
+                </button>
+              </div>
             </div>
           ))}
         </div>
