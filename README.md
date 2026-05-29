@@ -1,5 +1,4 @@
 # Bedrock LLM-Interface
-
 A small extremely simple local chat interface for Amazon Bedrock. Pick any Bedrock model, organize
 chats under projects (system prompt + project data + rolling memory), and let the
 model search your past chats with a built-in tool. All chat history and credentials
@@ -69,3 +68,11 @@ to use in the Bedrock console.
 - `npm run build` — typecheck the server and build the client bundle
 - `npm run start` — run the server (serves the built client if `client/dist` exists)
 - `npm run keygen` — print a fresh base64 MASTER_KEY
+
+
+## Screenshots
+
+<img width="1391" height="730" alt="Screenshot 2026-05-28 at 6 38 01 PM" src="https://github.com/user-attachments/assets/4e8e614e-14e2-4461-923f-3d8b00f0c5bf" />
+<img width="1391" height="739" alt="Screenshot 2026-05-28 at 6 38 31 PM" src="https://github.com/user-attachments/assets/51e1753d-6d51-42e9-a4ef-8cc15fa70d47" />
+<img width="1336" height="722" alt="Screenshot 2026-05-28 at 6 39 10 PM" src="https://github.com/user-attachments/assets/b25171a8-cd07-48ce-b0b5-6f4b408fc280" />
+<img width="1394" height="713" alt="Screenshot 2026-05-28 at 6 39 45 PM" src="https://github.com/user-attachments/assets/57c3b671-eca2-4099-9b53-d17abd171dfa" />
