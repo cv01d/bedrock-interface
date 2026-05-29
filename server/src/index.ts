@@ -24,6 +24,23 @@ const { uploadRouter } = await import("./routes/upload.js");
 
 const app = express();
 
+// Reject requests whose Host header isn't a loopback name. Combined with
+// binding to 127.0.0.1 below, this blocks DNS-rebinding attacks: a malicious
+// page can point its own domain at 127.0.0.1 and reach this API from the
+// victim's browser; the bind alone doesn't stop that, but the Host check does.
+const LOOPBACK_HOSTS = new Set(["localhost", "127.0.0.1", "[::1]"]);
+app.use((req, res, next) => {
+  const raw = req.headers.host ?? "";
+  const host = raw.startsWith("[")
+    ? raw.slice(0, raw.indexOf("]") + 1) // IPv6 literal: keep "[::1]"
+    : raw.split(":")[0];
+  if (!LOOPBACK_HOSTS.has(host)) {
+    res.status(403).json({ error: "Forbidden: invalid Host header." });
+    return;
+  }
+  next();
+});
+
 app.use(express.json({ limit: "2mb" }));
 
 app.get("/api/health", (_req, res) => res.json({ ok: true }));
@@ -43,6 +60,9 @@ if (existsSync(clientDist)) {
 }
 
 const port = Number(process.env.PORT ?? 3000);
-app.listen(port, () => {
-  console.log(`[server] listening on http://localhost:${port}`);
+// Bind to loopback only so the API (which serves decrypted creds and history)
+// is never reachable from other machines on the network.
+const host = "127.0.0.1";
+app.listen(port, host, () => {
+  console.log(`[server] listening on http://${host}:${port}`);
 });
