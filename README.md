@@ -62,6 +62,8 @@ to use in the Bedrock console.
 - `client/` — React UI (Chat / Projects / Settings views)
 - `server/data/` — SQLite DB + uploaded attachments (gitignored)
 
+Note: Pricing and tokens may vary per chat and/or model. It is ok to use as a guide for estimating, but do not rely on it.
+
 ## Scripts
 
 - `npm run dev` — run server + client together
