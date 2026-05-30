@@ -104,7 +104,8 @@ Note: Pricing and tokens may vary per chat and/or model. It is ok to use as a gu
 
 ## Screenshots
 
-<img width="1391" height="730" alt="Screenshot 2026-05-28 at 6 38 01 PM" src="https://github.com/user-attachments/assets/4e8e614e-14e2-4461-923f-3d8b00f0c5bf" />
-<img width="1391" height="739" alt="Screenshot 2026-05-28 at 6 38 31 PM" src="https://github.com/user-attachments/assets/51e1753d-6d51-42e9-a4ef-8cc15fa70d47" />
+<img width="1001" height="564" alt="Screenshot 2026-05-30 at 2 21 29 PM" src="https://github.com/user-attachments/assets/1c496fc4-bc47-4323-993d-4158cce55e65" />
+<img width="1017" height="724" alt="Screenshot 2026-05-30 at 2 22 28 PM" src="https://github.com/user-attachments/assets/50df67e1-6511-4310-83dd-0f86793d5c91" />
+<img width="1008" height="713" alt="Screenshot 2026-05-30 at 2 24 09 PM" src="https://github.com/user-attachments/assets/c3334c50-9beb-4910-bff2-f5337c08298f" />
 <img width="1336" height="722" alt="Screenshot 2026-05-28 at 6 39 10 PM" src="https://github.com/user-attachments/assets/b25171a8-cd07-48ce-b0b5-6f4b408fc280" />
 <img width="1394" height="713" alt="Screenshot 2026-05-28 at 6 39 45 PM" src="https://github.com/user-attachments/assets/57c3b671-eca2-4099-9b53-d17abd171dfa" />
