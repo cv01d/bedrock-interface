@@ -1,8 +1,29 @@
 # Bedrock LLM-Interface
 A small extremely simple local chat interface for Amazon Bedrock. Pick any Bedrock model, organize
-chats under projects (system prompt + project data + rolling memory), and let the
-model search your past chats with a built-in tool. All chat history and credentials
-are encrypted at rest in SQLite.
+chats under projects (system prompt + project data + rolling memory), and give the model
+built-in tools for searching your past chats, generating images, and searching the web.
+All chat history and credentials are encrypted at rest in SQLite.
+
+## Features
+
+- **Any Bedrock chat model** — in-region models and cross-region inference profiles,
+  with running per-chat cost and token tracking.
+- **Projects** — group chats under a system prompt + project data, with a rolling
+  memory summary the model carries across chats.
+- **Attachments** — upload images (vision) and documents (pdf/csv/docx/xlsx/…);
+  images render inline in the transcript.
+- **Image generation** — `generate_image` tool backed by a Bedrock image model
+  (Amazon Nova Canvas / Titan, or Stability), selectable in Settings. Generated
+  images are saved as attachments and shown in the chat.
+- **Web search** — `web_search` tool backed by [Tavily](https://tavily.com); add an
+  API key in Settings to enable it. Results render as a clickable sources list.
+- **Chat history search** — `search_chat_history` tool lets the model pull facts
+  from your earlier conversations.
+- **Prompt caching** on supported models, with accurate cache-token cost accounting.
+
+> Tools (history/image/web search) are only offered to tool-capable models
+> (Anthropic Claude and Amazon Nova). Image generation and web search also require
+> the relevant Settings config to be present.
 
 ## Stack
 
@@ -28,6 +49,15 @@ npm run dev              # server on :3000, client on :5173 (proxies /api)
 Open http://localhost:5173, go to **Settings**, and enter your AWS access key, secret,
 and region. Saving runs a Bedrock smoke test and reports how many models are reachable.
 Then pick a summarizer model (a small/cheap one like Haiku or Nova Lite).
+
+Optional, in the same Settings page:
+
+- **Image model** — pick one of the image-generation models your account can invoke
+  (e.g. Nova Canvas, Titan Image, or a Stability model) to enable the `generate_image`
+  tool. Leave it off to disable image generation.
+- **Tavily API key** — paste a key from [tavily.com](https://tavily.com) to enable the
+  `web_search` tool (free tier ≈ 1,000 searches/month). It's encrypted at rest like your
+  AWS credentials.
 
 > **MASTER_KEY** encrypts everything sensitive at rest. If you lose it, encrypted data
 > (messages, project content, AWS credentials) is unrecoverable. Keep it out of source
