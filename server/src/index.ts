@@ -21,6 +21,7 @@ const { modelsRouter } = await import("./routes/models.js");
 const { projectsRouter } = await import("./routes/projects.js");
 const { chatsRouter } = await import("./routes/chats.js");
 const { uploadRouter } = await import("./routes/upload.js");
+const { attachmentsRouter } = await import("./routes/attachments.js");
 
 const app = express();
 
@@ -49,6 +50,7 @@ app.use("/api/models", modelsRouter);
 app.use("/api/projects", projectsRouter);
 app.use("/api/chats", chatsRouter);
 app.use("/api/upload", uploadRouter);
+app.use("/api/attachments", attachmentsRouter);
 
 // Serve the built client in production (dist served by Vite build).
 const clientDist = join(__dirname, "..", "..", "client", "dist");

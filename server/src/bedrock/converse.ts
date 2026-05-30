@@ -3,6 +3,7 @@ import {
   ConverseStreamCommand,
   type Message as BedrockMessage,
   type SystemContentBlock,
+  type Tool,
   type ToolConfiguration,
 } from "@aws-sdk/client-bedrock-runtime";
 import type { ContentBlock, SSEEvent } from "@chat/shared";
@@ -13,7 +14,17 @@ import {
   runSearchHistory,
   searchHistoryTool,
 } from "./tools/searchHistory.js";
-import { addMessage, getMessages } from "../db/repo.js";
+import {
+  GENERATE_IMAGE_TOOL_NAME,
+  generateImageTool,
+  runGenerateImage,
+} from "./tools/generateImage.js";
+import {
+  WEB_SEARCH_TOOL_NAME,
+  runWebSearch,
+  webSearchTool,
+} from "./tools/webSearch.js";
+import { addMessage, getMessages, linkAttachmentsToMessage } from "../db/repo.js";
 import type { Message } from "@chat/shared";
 
 const MAX_TOOL_ROUNDS = 5;
@@ -61,6 +72,8 @@ export async function streamChat(opts: {
   maxTokens: number;
   maxMessages: number;
   includeSearchTool: boolean;
+  includeImageTool: boolean;
+  includeWebSearchTool: boolean;
   includeCaching: boolean;
   emit: (e: SSEEvent) => void;
 }): Promise<StreamResult> {
@@ -78,13 +91,13 @@ export async function streamChat(opts: {
       : [{ text: opts.systemText }]
     : undefined;
 
-  const toolConfig: ToolConfiguration | undefined = opts.includeSearchTool
-    ? {
-        tools: opts.includeCaching
-          ? [searchHistoryTool, cachePoint]
-          : [searchHistoryTool],
-      }
-    : undefined;
+  const tools: Tool[] = [];
+  if (opts.includeSearchTool) tools.push(searchHistoryTool);
+  if (opts.includeImageTool) tools.push(generateImageTool);
+  if (opts.includeWebSearchTool) tools.push(webSearchTool);
+  if (opts.includeCaching && tools.length > 0) tools.push(cachePoint as Tool);
+  const toolConfig: ToolConfiguration | undefined =
+    tools.length > 0 ? { tools } : undefined;
 
   // Seed the conversation from persisted history (already includes the new
   // user message the route saved before calling us), trimmed to context size.
@@ -231,6 +244,7 @@ export async function streamChat(opts: {
 
     // Run each requested tool and assemble a user toolResult turn.
     const resultBlocks: ContentBlock[] = [];
+    const generatedAttachmentIds: number[] = [];
     for (const call of toolCalls) {
       if (call.name === SEARCH_TOOL_NAME) {
         const results = runSearchHistory(call.input);
@@ -243,8 +257,74 @@ export async function streamChat(opts: {
         opts.emit({
           type: "tool_result",
           toolUseId: call.toolUseId,
+          name: call.name,
           resultCount: results.length,
         });
+      } else if (call.name === GENERATE_IMAGE_TOOL_NAME) {
+        const r = await runGenerateImage(call.input);
+        if (r.ok) {
+          resultBlocks.push({
+            type: "toolResult",
+            toolUseId: call.toolUseId,
+            status: "success",
+            content: [],
+            images: [{ attachmentId: r.attachmentId, mime: r.mime, name: r.name }],
+            summary: `Generated an image for: "${r.prompt}". It is now shown to the user.`,
+          });
+          generatedAttachmentIds.push(r.attachmentId);
+          opts.emit({
+            type: "tool_result",
+            toolUseId: call.toolUseId,
+            name: call.name,
+            resultCount: 1,
+          });
+        } else {
+          resultBlocks.push({
+            type: "toolResult",
+            toolUseId: call.toolUseId,
+            status: "error",
+            content: [],
+            summary: r.error,
+          });
+          opts.emit({
+            type: "tool_result",
+            toolUseId: call.toolUseId,
+            name: call.name,
+            resultCount: 0,
+          });
+        }
+      } else if (call.name === WEB_SEARCH_TOOL_NAME) {
+        const r = await runWebSearch(call.input);
+        if (r.ok) {
+          resultBlocks.push({
+            type: "toolResult",
+            toolUseId: call.toolUseId,
+            status: "success",
+            content: [],
+            webResults: r.results,
+            answer: r.answer,
+          });
+          opts.emit({
+            type: "tool_result",
+            toolUseId: call.toolUseId,
+            name: call.name,
+            resultCount: r.results.length,
+          });
+        } else {
+          resultBlocks.push({
+            type: "toolResult",
+            toolUseId: call.toolUseId,
+            status: "error",
+            content: [],
+            summary: r.error,
+          });
+          opts.emit({
+            type: "tool_result",
+            toolUseId: call.toolUseId,
+            name: call.name,
+            resultCount: 0,
+          });
+        }
       } else {
         resultBlocks.push({
           type: "toolResult",
@@ -260,6 +340,13 @@ export async function streamChat(opts: {
       role: "user",
       blocks: resultBlocks,
     });
+    // Link generated images to their tool-result message so they aren't orphaned.
+    if (generatedAttachmentIds.length > 0) {
+      linkAttachmentsToMessage(generatedAttachmentIds, savedToolResult.id);
+    }
+    // Stream the tool-result message so generated images render immediately
+    // (the client filters out result messages that carry no images).
+    opts.emit({ type: "message_saved", message: savedToolResult });
     convo.push({
       role: "user",
       content: toBedrockMessages([savedToolResult])[0]?.content ?? [],

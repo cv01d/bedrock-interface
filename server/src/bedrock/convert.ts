@@ -76,14 +76,31 @@ function blockToBedrock(block: ContentBlock): BedrockContentBlock | null {
           input: block.input as never,
         },
       };
-    case "toolResult":
+    case "toolResult": {
+      // Image-generating tools report a status note (the image itself is shown
+      // to the user, not fed back as bytes); web search reports ranked results
+      // plus an optional answer; history search reports result rows.
+      let payload: unknown;
+      if (block.images && block.images.length > 0) {
+        payload = {
+          status: block.status,
+          note: block.summary ?? "Image generated and shown to the user.",
+        };
+      } else if (block.webResults) {
+        payload = { answer: block.answer ?? "", results: block.webResults };
+      } else if (block.summary && block.status === "error") {
+        payload = { status: "error", error: block.summary };
+      } else {
+        payload = { results: block.content };
+      }
       return {
         toolResult: {
           toolUseId: block.toolUseId,
           status: block.status,
-          content: [{ json: { results: block.content } as never }],
+          content: [{ json: payload as never }],
         },
       };
+    }
     default:
       return null;
   }

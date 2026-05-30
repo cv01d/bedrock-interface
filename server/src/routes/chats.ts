@@ -145,6 +145,11 @@ chatsRouter.post("/:id/messages", async (req, res) => {
       maxTokens: 4096,
       maxMessages: settings.contextSize,
       includeSearchTool: body.enableTools !== false,
+      includeImageTool:
+        body.enableTools !== false &&
+        settings.defaultImageModelId.trim() !== "",
+      includeWebSearchTool:
+        body.enableTools !== false && settings.hasTavilyApiKey,
       includeCaching: body.enableCaching === true,
       emit: (e) => {
         if (!aborted) sse.send(e);

@@ -30,12 +30,16 @@ interface SettingsRow {
   context_size: number;
   aws_region: string;
   default_summarizer_model_id: string;
+  default_image_model_id: string;
   enc_aws_access_key_id: Uint8Array | null;
   enc_aws_secret_access_key: Uint8Array | null;
+  enc_tavily_api_key: Uint8Array | null;
 }
 
 const CREDS_DOMAIN = "settings.aws_creds";
 const CREDS_AAD = "settings:1";
+const TAVILY_DOMAIN = "settings.tavily_api_key";
+const TAVILY_AAD = "settings:1";
 
 export function getSettingsRow(): SettingsRow {
   return db
@@ -51,9 +55,18 @@ export function getSettings(): Settings {
     contextSize: r.context_size,
     awsRegion: r.aws_region,
     defaultSummarizerModelId: r.default_summarizer_model_id,
+    defaultImageModelId: r.default_image_model_id,
     hasAwsAccessKeyId: r.enc_aws_access_key_id != null,
     hasAwsSecretAccessKey: r.enc_aws_secret_access_key != null,
+    hasTavilyApiKey: r.enc_tavily_api_key != null,
   };
+}
+
+// Returns the decrypted Tavily API key, or null if not configured.
+export function getTavilyApiKey(): string | null {
+  const r = getSettingsRow();
+  if (!r.enc_tavily_api_key) return null;
+  return decrypt(r.enc_tavily_api_key, TAVILY_DOMAIN, TAVILY_AAD);
 }
 
 // Returns decrypted AWS credentials, or null if not fully configured.
@@ -81,8 +94,10 @@ export function updateSettings(patch: {
   contextSize?: number;
   awsRegion?: string;
   defaultSummarizerModelId?: string;
+  defaultImageModelId?: string;
   awsAccessKeyId?: string;
   awsSecretAccessKey?: string;
+  tavilyApiKey?: string;
 }): void {
   const sets: string[] = [];
   const vals: SqlParam[] = [];
@@ -106,6 +121,10 @@ export function updateSettings(patch: {
     sets.push("default_summarizer_model_id = ?");
     vals.push(patch.defaultSummarizerModelId);
   }
+  if (patch.defaultImageModelId !== undefined) {
+    sets.push("default_image_model_id = ?");
+    vals.push(patch.defaultImageModelId);
+  }
   if (patch.awsAccessKeyId) {
     sets.push("enc_aws_access_key_id = ?");
     vals.push(encrypt(patch.awsAccessKeyId, CREDS_DOMAIN, CREDS_AAD));
@@ -113,6 +132,15 @@ export function updateSettings(patch: {
   if (patch.awsSecretAccessKey) {
     sets.push("enc_aws_secret_access_key = ?");
     vals.push(encrypt(patch.awsSecretAccessKey, CREDS_DOMAIN, CREDS_AAD));
+  }
+  if (patch.tavilyApiKey !== undefined) {
+    // Empty string clears the key (disables web search); otherwise encrypt it.
+    sets.push("enc_tavily_api_key = ?");
+    vals.push(
+      patch.tavilyApiKey
+        ? encrypt(patch.tavilyApiKey, TAVILY_DOMAIN, TAVILY_AAD)
+        : null
+    );
   }
   if (sets.length === 0) return;
   db.prepare(`UPDATE settings SET ${sets.join(", ")} WHERE id = 1`).run(

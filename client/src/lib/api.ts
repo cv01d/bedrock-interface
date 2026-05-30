@@ -2,6 +2,7 @@ import type {
   AttachmentInfo,
   Chat,
   ChatSummary,
+  ImageModelInfo,
   ModelInfo,
   Project,
   ProjectSummary,
@@ -41,6 +42,7 @@ export const api = {
 
   // Models
   getModels: () => jsonFetch<ModelInfo[]>("/api/models"),
+  getImageModels: () => jsonFetch<ImageModelInfo[]>("/api/models/images"),
 
   // Projects
   listProjects: () => jsonFetch<ProjectSummary[]>("/api/projects"),

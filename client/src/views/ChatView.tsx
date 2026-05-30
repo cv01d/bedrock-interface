@@ -179,13 +179,27 @@ export function ChatView() {
             setStreamingText((prev) => (prev ?? "") + event.text);
             break;
           case "tool_call_start":
-            setToolStatus("🔎 Searching chat history…");
+            setToolStatus(
+              event.name === "generate_image"
+                ? "🎨 Generating image…"
+                : event.name === "web_search"
+                  ? "🌐 Searching the web…"
+                  : "🔎 Searching chat history…"
+            );
             break;
           case "tool_result":
             setToolStatus(
-              `🔎 History search → ${event.resultCount} result${
-                event.resultCount === 1 ? "" : "s"
-              }`
+              event.name === "generate_image"
+                ? event.resultCount > 0
+                  ? "🎨 Image generated"
+                  : "🎨 Image generation failed"
+                : event.name === "web_search"
+                  ? `🌐 Web search → ${event.resultCount} result${
+                      event.resultCount === 1 ? "" : "s"
+                    }`
+                  : `🔎 History search → ${event.resultCount} result${
+                      event.resultCount === 1 ? "" : "s"
+                    }`
             );
             break;
           case "message_saved":

@@ -1,6 +1,7 @@
 import { create } from "zustand";
 import type {
   ChatSummary,
+  ImageModelInfo,
   ModelInfo,
   ProjectSummary,
   Settings,
@@ -15,6 +16,7 @@ interface AppState {
 
   settings: Settings | null;
   models: ModelInfo[];
+  imageModels: ImageModelInfo[];
   modelError: string | null;
   chats: ChatSummary[];
   projects: ProjectSummary[];
@@ -24,6 +26,7 @@ interface AppState {
 
   loadSettings: () => Promise<void>;
   loadModels: () => Promise<void>;
+  loadImageModels: () => Promise<void>;
   loadChats: () => Promise<void>;
   loadProjects: () => Promise<void>;
 }
@@ -34,6 +37,7 @@ export const useStore = create<AppState>((set, get) => ({
 
   settings: null,
   models: [],
+  imageModels: [],
   modelError: null,
   chats: [],
   projects: [],
@@ -58,6 +62,14 @@ export const useStore = create<AppState>((set, get) => ({
         models: [],
         modelError: err instanceof Error ? err.message : String(err),
       });
+    }
+  },
+
+  loadImageModels: async () => {
+    try {
+      set({ imageModels: await api.getImageModels() });
+    } catch {
+      set({ imageModels: [] });
     }
   },
 

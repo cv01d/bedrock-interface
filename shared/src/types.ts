@@ -14,7 +14,27 @@ export type ContentBlock =
       toolUseId: string;
       content: SearchHistoryResult[];
       status: "success" | "error";
+      // Present when a tool produced images to render in the transcript (e.g.
+      // the generate_image tool). The bytes are served from /api/attachments/:id.
+      images?: GeneratedImage[];
+      // Present for the web_search tool: ranked web results + optional answer.
+      webResults?: WebSearchResult[];
+      answer?: string;
+      // Human/model-readable note for non-search tool results.
+      summary?: string;
     };
+
+export interface GeneratedImage {
+  attachmentId: number;
+  mime: string;
+  name: string;
+}
+
+export interface WebSearchResult {
+  title: string;
+  url: string;
+  content: string;
+}
 
 export interface Message {
   id: number;
@@ -67,9 +87,13 @@ export interface Settings {
   contextSize: number;
   awsRegion: string;
   defaultSummarizerModelId: string;
+  // Image-generation model used by the generate_image tool. Empty disables it.
+  defaultImageModelId: string;
   // Never returned with real values — masked indicators only.
   hasAwsAccessKeyId: boolean;
   hasAwsSecretAccessKey: boolean;
+  // Tavily API key for the web_search tool. Presence enables web search.
+  hasTavilyApiKey: boolean;
 }
 
 export interface SettingsUpdate {
@@ -78,8 +102,10 @@ export interface SettingsUpdate {
   contextSize?: number;
   awsRegion?: string;
   defaultSummarizerModelId?: string;
+  defaultImageModelId?: string;
   awsAccessKeyId?: string;
   awsSecretAccessKey?: string;
+  tavilyApiKey?: string;
 }
 
 export interface ModelInfo {
@@ -103,6 +129,13 @@ export interface ModelInfo {
   estimatedPrice: boolean;
 }
 
+// An image-generation model the account can invoke and we have an adapter for.
+export interface ImageModelInfo {
+  id: string;
+  label: string;
+  provider: string;
+}
+
 export interface AttachmentInfo {
   id: number;
   kind: "image" | "document";
@@ -124,7 +157,7 @@ export type SSEEvent =
   | { type: "start" }
   | { type: "delta"; text: string }
   | { type: "tool_call_start"; toolUseId: string; name: string }
-  | { type: "tool_result"; toolUseId: string; resultCount: number }
+  | { type: "tool_result"; toolUseId: string; name: string; resultCount: number }
   | { type: "message_saved"; message: Message }
   | {
       type: "done";

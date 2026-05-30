@@ -18,15 +18,18 @@ const COMMON_TZ = [
 ];
 
 export function SettingsView() {
-  const { settings, models, loadSettings, loadModels } = useStore();
+  const { settings, models, imageModels, loadSettings, loadModels, loadImageModels } =
+    useStore();
 
   const [timezone, setTimezone] = useState("UTC");
   const [temperature, setTemperature] = useState(0.7);
   const [contextSize, setContextSize] = useState(20);
   const [awsRegion, setAwsRegion] = useState("us-east-1");
   const [summarizerModel, setSummarizerModel] = useState("");
+  const [imageModel, setImageModel] = useState("");
   const [accessKey, setAccessKey] = useState("");
   const [secretKey, setSecretKey] = useState("");
+  const [tavilyKey, setTavilyKey] = useState("");
   const [saving, setSaving] = useState(false);
   const [banner, setBanner] = useState<{ ok: boolean; text: string } | null>(
     null
@@ -39,8 +42,15 @@ export function SettingsView() {
       setContextSize(settings.contextSize);
       setAwsRegion(settings.awsRegion);
       setSummarizerModel(settings.defaultSummarizerModelId);
+      setImageModel(settings.defaultImageModelId);
     }
   }, [settings]);
+
+  // Image-generation models aren't loaded at app start (they're only needed
+  // here), so fetch them when the Settings view mounts.
+  useEffect(() => {
+    loadImageModels();
+  }, [loadImageModels]);
 
   const save = async () => {
     setSaving(true);
@@ -51,14 +61,17 @@ export function SettingsView() {
       contextSize,
       awsRegion,
       defaultSummarizerModelId: summarizerModel,
+      defaultImageModelId: imageModel,
     };
     if (accessKey.trim()) patch.awsAccessKeyId = accessKey.trim();
     if (secretKey.trim()) patch.awsSecretAccessKey = secretKey.trim();
+    if (tavilyKey.trim()) patch.tavilyApiKey = tavilyKey.trim();
 
     try {
       const { validation } = await api.updateSettings(patch);
       setAccessKey("");
       setSecretKey("");
+      setTavilyKey("");
       await loadSettings();
       await loadModels();
       if (validation.ok) {
@@ -197,6 +210,84 @@ export function SettingsView() {
                 Save valid AWS credentials to load the model list.
               </p>
             )}
+          </div>
+
+          <div className="field">
+            <label>
+              Image model — used when you ask the assistant to generate an image
+            </label>
+            <select
+              value={imageModel}
+              onChange={(e) => setImageModel(e.target.value)}
+            >
+              <option value="">— off (no image generation) —</option>
+              {imageModels.map((m) => (
+                <option key={m.id} value={m.id}>
+                  {m.label}
+                </option>
+              ))}
+              {/* Keep a saved id selectable even if it's missing from the list. */}
+              {imageModel &&
+                !imageModels.some((m) => m.id === imageModel) && (
+                  <option value={imageModel}>{imageModel}</option>
+                )}
+            </select>
+            <p className="muted" style={{ marginTop: 6 }}>
+              {imageModels.length === 0
+                ? "No image-generation models are available in this region/account. Enable one in the Bedrock console (e.g. Amazon Nova Canvas, Titan Image, or a Stability model)."
+                : "When set, the assistant can call a generate_image tool; the image is rendered in the chat."}
+            </p>
+          </div>
+
+          <h3>Web search</h3>
+          <div className="field">
+            <label>
+              Tavily API key{" "}
+              {settings?.hasTavilyApiKey && (
+                <span className="muted">(saved — leave blank to keep)</span>
+              )}
+            </label>
+            <input
+              type="password"
+              autoComplete="off"
+              value={tavilyKey}
+              onChange={(e) => setTavilyKey(e.target.value)}
+              placeholder={settings?.hasTavilyApiKey ? "••••••••" : "tvly-…"}
+            />
+            <p className="muted" style={{ marginTop: 6 }}>
+              {settings?.hasTavilyApiKey
+                ? "When set, the assistant can call a web_search tool to look things up online (tool-capable models only)."
+                : "Add a key from tavily.com to let the assistant search the web. The free tier covers ~1,000 searches/month."}
+              {settings?.hasTavilyApiKey && (
+                <>
+                  {" "}
+                  <button
+                    className="linklike"
+                    type="button"
+                    disabled={saving}
+                    onClick={async () => {
+                      setSaving(true);
+                      setBanner(null);
+                      try {
+                        await api.updateSettings({ tavilyApiKey: "" });
+                        setTavilyKey("");
+                        await loadSettings();
+                        setBanner({ ok: true, text: "Web search disabled (key removed)." });
+                      } catch (err) {
+                        setBanner({
+                          ok: false,
+                          text: err instanceof Error ? err.message : String(err),
+                        });
+                      } finally {
+                        setSaving(false);
+                      }
+                    }}
+                  >
+                    Remove key
+                  </button>
+                </>
+              )}
+            </p>
           </div>
 
           <button className="primary" onClick={save} disabled={saving}>
