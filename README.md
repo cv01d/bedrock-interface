@@ -19,7 +19,7 @@ All chat history and credentials are encrypted at rest in SQLite.
   API key in Settings to enable it. Results render as a clickable sources list.
 - **Chat history search** — `search_chat_history` tool lets the model pull facts
   from your earlier conversations.
-- **Prompt caching** on supported models, with accurate cache-token cost accounting.
+- **Prompt caching** on supported models, with estimated cache-token cost accounting.
 
 > Tools (history/image/web search) are only offered to tool-capable models
 > (Anthropic Claude and Amazon Nova). Image generation and web search also require
