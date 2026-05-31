@@ -18,7 +18,11 @@ import {
   setMessageHidden,
   updateChat,
 } from "../db/repo.js";
-import { buildSnapshot, buildSystemText } from "../services/context.js";
+import {
+  buildSnapshot,
+  buildSystemText,
+  buildProjectMemoryText,
+} from "../services/context.js";
 import { stopChat, streamChat } from "../bedrock/converse.js";
 import { NoCredentialsError } from "../bedrock/client.js";
 import { explainBedrockError } from "../bedrock/errors.js";
@@ -138,9 +142,12 @@ async function streamTurn(
     chatRow.project_id != null ? getProject(chatRow.project_id) : null;
   const systemText = buildSystemText({
     snapshot: getChatSnapshot(chatId),
-    liveRollingSummary: project?.rollingSummary ?? "",
     settings,
   });
+  // Live project memory is delivered in the user turn (not the system prompt) so
+  // that summarizer output — which can incorporate untrusted web/document
+  // content — cannot speak with system authority. See buildProjectMemoryText.
+  const projectMemory = buildProjectMemoryText(project?.rollingSummary ?? "");
 
   const sse = openSSE(res);
   // If the client disconnects mid-stream, stop work where we can. Use the
@@ -163,6 +170,7 @@ async function streamTurn(
       projectId: chatRow.project_id,
       modelId: chatRow.model_id,
       systemText,
+      projectMemory,
       temperature: settings.temperature,
       maxTokens: 4096,
       maxMessages: settings.contextSize,

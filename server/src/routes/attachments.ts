@@ -14,11 +14,17 @@ attachmentsRouter.get("/:id", (req, res) => {
     return;
   }
   res.setHeader("Content-Type", att.mime);
+  // Never let the browser sniff a different (e.g. executable) type from bytes.
+  res.setHeader("X-Content-Type-Options", "nosniff");
   // Content is immutable (paths are content-addressed by checksum).
   res.setHeader("Cache-Control", "private, max-age=31536000, immutable");
+  // Only images are rendered inline by the client. Everything else (notably
+  // uploaded text/html, which would otherwise execute as same-origin script
+  // when opened) is forced to download rather than render in this origin.
+  const disposition = att.kind === "image" ? "inline" : "attachment";
   res.setHeader(
     "Content-Disposition",
-    `inline; filename="${encodeURIComponent(att.name)}"`
+    `${disposition}; filename="${encodeURIComponent(att.name)}"`
   );
   createReadStream(att.path).pipe(res);
 });

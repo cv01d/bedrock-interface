@@ -108,6 +108,9 @@ export async function streamChat(opts: {
   projectId: number | null;
   modelId: string;
   systemText: string;
+  // Fenced, untrusted project-memory text appended to the latest user turn (not
+  // the system prompt). Empty string when the chat has no project memory.
+  projectMemory: string;
   temperature: number;
   maxTokens: number;
   maxMessages: number;
@@ -144,13 +147,6 @@ export async function streamChat(opts: {
   const toolConfig: ToolConfiguration | undefined =
     tools.length > 0 ? { tools } : undefined;
 
-  // TEMP diagnostic: confirms whether a toolConfig is being sent for this model.
-  // Remove once the "doesn't support tool use in streaming mode" issue is settled.
-  console.error(
-    `[streamChat] model=${opts.modelId} supportsTools=${supportsTools} ` +
-      `toolCount=${tools.length} hasToolConfig=${!!toolConfig}`
-  );
-
   // Seed the conversation from persisted history (already includes the new
   // user message the route saved before calling us), trimmed to context size.
   // For non-tool models, also strip any tool blocks left over from earlier turns
@@ -162,6 +158,17 @@ export async function streamChat(opts: {
       opts.maxMessages
     )
   );
+
+  // Deliver project memory as part of the latest user turn rather than the
+  // system prompt, so summarizer output (which may have absorbed untrusted web
+  // or document content) carries user-level, not system-level, authority. It is
+  // not persisted — only injected into this request's in-memory conversation.
+  if (opts.projectMemory && convo.length > 0) {
+    const last = convo[convo.length - 1];
+    if (last.role === "user") {
+      last.content = [...(last.content ?? []), { text: opts.projectMemory }];
+    }
+  }
 
   // Cache the conversation prefix too (everything through the latest user
   // message). On the next turn this prefix is reused. Appended once here; the
