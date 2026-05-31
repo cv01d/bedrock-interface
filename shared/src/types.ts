@@ -49,6 +49,24 @@ export interface Message {
   cacheReadTokens: number | null;
   cacheWriteTokens: number | null;
   createdAt: string;
+  // "Removed from view": kept in the DB but excluded from the rendered
+  // transcript and from the context sent to the model.
+  hidden: boolean;
+  // Bookmarked by the user (present in the favorites table).
+  favorite: boolean;
+}
+
+// A bookmarked turn, shown in the Favorites tab.
+export interface FavoriteItem {
+  id: number; // favorites row id
+  messageId: number;
+  chatId: number;
+  chatTitle: string;
+  role: Role;
+  snippet: string;
+  // User-given name; null falls back to the snippet for display.
+  label: string | null;
+  createdAt: string;
 }
 
 export interface ChatSummary {
@@ -57,6 +75,7 @@ export interface ChatSummary {
   title: string;
   modelId: string;
   updatedAt: string;
+  archived: boolean;
 }
 
 export interface Chat extends ChatSummary {

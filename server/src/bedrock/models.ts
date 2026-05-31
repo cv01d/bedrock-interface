@@ -10,13 +10,22 @@ import { priceFor } from "./pricing.js";
 // Cross-region inference profiles are prefixed with a geo scope.
 const GEO_PREFIXES = ["us.", "eu.", "apac.", "global.", "us-gov."];
 
+// Whether a model supports Converse tool use, decided from the model id alone.
+// Anthropic Claude and Amazon Nova only — sending a toolConfig to any other
+// model (e.g. DeepSeek) makes Bedrock throw "This model doesn't support tool use
+// in streaming mode". Anthropic ids contain "anthropic" (in-region and the
+// "us./eu./…" inference-profile variants); Nova ids contain "nova". Exported so
+// the request path can gate tools without a ListModels round-trip.
+export function modelSupportsTools(modelId: string): boolean {
+  const id = modelId.toLowerCase();
+  return id.includes("anthropic") || id.includes("nova");
+}
+
 // Providers/models we trust to support Converse tool use + documents. Kept
 // conservative on purpose: a false negative just hides the history-search tool,
 // while a false positive makes Converse throw a ValidationException.
 function toolAndDocSupport(modelId: string, provider: string): boolean {
-  const p = provider.toLowerCase();
-  const id = modelId.toLowerCase();
-  return p.includes("anthropic") || id.includes("nova");
+  return provider.toLowerCase().includes("anthropic") || modelSupportsTools(modelId);
 }
 
 // Prompt caching is supported on Anthropic Claude 3.5 Sonnet v2, 3.7 Sonnet,

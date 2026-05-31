@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import remarkBreaks from "remark-breaks";
@@ -136,18 +136,96 @@ function ModelAvatar() {
   );
 }
 
+function BookmarkIcon({ filled }: { filled: boolean }) {
+  return (
+    <svg
+      width="14"
+      height="14"
+      viewBox="0 0 24 24"
+      fill={filled ? "currentColor" : "none"}
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <path d="M6 3h12a1 1 0 0 1 1 1v17l-7-4-7 4V4a1 1 0 0 1 1-1z" />
+    </svg>
+  );
+}
+
+// Per-turn hover toolbar: bookmark, regenerate (last assistant turn only),
+// and remove-from-view / restore.
+function MessageActions({
+  m,
+  isRegenTarget,
+  busy,
+  onToggleHidden,
+  onToggleFavorite,
+  onRegenerate,
+}: {
+  m: Message;
+  isRegenTarget: boolean;
+  busy: boolean;
+  onToggleHidden: (messageId: number, hidden: boolean) => void;
+  onToggleFavorite: (messageId: number, favorite: boolean) => void;
+  onRegenerate: () => void;
+}) {
+  return (
+    <div className="msg-actions">
+      <button
+        className={`act${m.favorite ? " on" : ""}`}
+        title={m.favorite ? "Remove bookmark" : "Bookmark this turn"}
+        aria-label="Bookmark"
+        onClick={() => onToggleFavorite(m.id, !m.favorite)}
+      >
+        <BookmarkIcon filled={m.favorite} />
+      </button>
+      {isRegenTarget && (
+        <button
+          className="act"
+          title="Regenerate this response"
+          aria-label="Regenerate"
+          disabled={busy}
+          onClick={onRegenerate}
+        >
+          ↻
+        </button>
+      )}
+      <button
+        className="act"
+        title={m.hidden ? "Restore to view" : "Remove from view"}
+        aria-label={m.hidden ? "Restore" : "Hide"}
+        onClick={() => onToggleHidden(m.id, !m.hidden)}
+      >
+        {m.hidden ? "⊕" : "⊗"}
+      </button>
+    </div>
+  );
+}
+
 export function MessageList({
   messages,
   streamingText,
   toolStatus,
   models,
+  busy,
+  highlightMessageId,
+  onToggleHidden,
+  onToggleFavorite,
+  onRegenerate,
 }: {
   messages: Message[];
   streamingText: string | null;
   toolStatus: string | null;
   models: ModelInfo[];
+  busy: boolean;
+  highlightMessageId: number | null;
+  onToggleHidden: (messageId: number, hidden: boolean) => void;
+  onToggleFavorite: (messageId: number, favorite: boolean) => void;
+  onRegenerate: () => void;
 }) {
   const containerRef = useRef<HTMLDivElement>(null);
+  const [showHidden, setShowHidden] = useState(false);
   // Only auto-scroll when the user is already parked at the bottom; if they've
   // scrolled up to read, leave their position alone (streaming deltas would
   // otherwise yank them back down on every frame).
@@ -165,6 +243,17 @@ export function MessageList({
     const el = containerRef.current;
     if (el) el.scrollTop = el.scrollHeight;
   }, [messages, streamingText, toolStatus]);
+
+  // Jump-to: when a favorite is opened, scroll its turn into view and flash it.
+  useEffect(() => {
+    if (highlightMessageId == null) return;
+    const el = document.getElementById(`msg-${highlightMessageId}`);
+    if (!el) return;
+    el.scrollIntoView({ behavior: "smooth", block: "center" });
+    el.classList.add("flash");
+    const t = setTimeout(() => el.classList.remove("flash"), 1600);
+    return () => clearTimeout(t);
+  }, [highlightMessageId, messages]);
 
   const labelFor = (modelId: string | null) =>
     models.find((m) => m.id === modelId)?.label ?? "the model";
@@ -184,38 +273,78 @@ export function MessageList({
 
   // Hide pure tool-result turns (e.g. the history-search round-trip) unless they
   // carry images or web sources to show. Other turns render normally.
-  const visible = messages.filter((m) => {
+  const renderable = messages.filter((m) => {
     if (m.blocks.length === 0) return false;
     if (isToolResultOnly(m)) return hasDisplayableResult(m);
     return true;
   });
+  const hiddenCount = renderable.filter((m) => m.hidden).length;
+  const visible = showHidden
+    ? renderable
+    : renderable.filter((m) => !m.hidden);
+
+  // Regenerate only applies to the latest assistant turn.
+  let lastAssistantId: number | null = null;
+  for (const m of messages) if (m.role === "assistant") lastAssistantId = m.id;
 
   return (
     <div className="messages" ref={containerRef} onScroll={onScroll}>
       {visible.length === 0 && !streamingText && (
         <div className="empty">Send a message to start the conversation.</div>
       )}
+      {hiddenCount > 0 && (
+        <div className="hidden-toggle">
+          <button onClick={() => setShowHidden((v) => !v)}>
+            {showHidden
+              ? `Hide ${hiddenCount} removed turn${hiddenCount === 1 ? "" : "s"}`
+              : `Show ${hiddenCount} removed turn${hiddenCount === 1 ? "" : "s"}`}
+          </button>
+        </div>
+      )}
       {visible.map((m) => {
         // Generated images arrive on a "user" tool-result message; show them in
         // the assistant column (without the model-attribution footer).
         const asAssistant = m.role === "assistant" || isToolResultOnly(m);
+        const actions = (
+          <MessageActions
+            m={m}
+            isRegenTarget={m.id === lastAssistantId && !busy}
+            busy={busy}
+            onToggleHidden={onToggleHidden}
+            onToggleFavorite={onToggleFavorite}
+            onRegenerate={onRegenerate}
+          />
+        );
         return asAssistant ? (
-          <div key={m.id} className="msg assistant">
+          <div
+            key={m.id}
+            id={`msg-${m.id}`}
+            className={`msg assistant${m.hidden ? " is-hidden" : ""}`}
+          >
             <div className="assistant-row">
               <ModelAvatar />
               <div className="assistant-col">
                 <Blocks blocks={m.blocks} markdown />
-                {m.role === "assistant" && (
-                  <div className="msg-foot">
-                    Response generated by {labelFor(m.modelId)}
-                  </div>
-                )}
+                <div className="msg-foot-row">
+                  {m.role === "assistant" && (
+                    <div className="msg-foot">
+                      Response generated by {labelFor(m.modelId)}
+                      {m.stopReason === "stopped" && " · stopped"}
+                    </div>
+                  )}
+                  {actions}
+                </div>
               </div>
             </div>
           </div>
         ) : (
-          <div key={m.id} className="msg user">
+          <div
+            key={m.id}
+            id={`msg-${m.id}`}
+            className={`msg user${m.hidden ? " is-hidden" : ""}`}
+          >
             <Blocks blocks={m.blocks} />
+            {actions}
           </div>
         );
       })}

@@ -11,6 +11,7 @@ export function Composer({
   projectId,
   onSelectProject,
   onSend,
+  onStop,
   onSummarize,
   busy,
   canSummarize,
@@ -24,6 +25,7 @@ export function Composer({
   projectId: number | null;
   onSelectProject: (id: number | null) => void;
   onSend: (text: string, attachments: AttachmentInfo[]) => void;
+  onStop: () => void;
   onSummarize: () => void;
   busy: boolean;
   canSummarize: boolean;
@@ -111,7 +113,7 @@ export function Composer({
               : "Attach this chat to a project to enable summarize"
           }
         >
-          🧠 Summarize
+          Summarize
         </button>
 
         <button
@@ -187,21 +189,29 @@ export function Composer({
             }
           }}
         />
-        <button
-          className="primary"
-          onClick={send}
-          disabled={busy}
-          title="Send"
-          aria-label="Send"
-        >
-          {busy ? (
-            "…"
-          ) : (
+        {busy ? (
+          <button
+            className="primary stop"
+            onClick={onStop}
+            title="Stop generating"
+            aria-label="Stop"
+          >
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+              <rect x="6" y="6" width="12" height="12" rx="2" />
+            </svg>
+          </button>
+        ) : (
+          <button
+            className="primary"
+            onClick={send}
+            title="Send"
+            aria-label="Send"
+          >
             <svg width="26" height="26" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
               <path d="M8 5v14l11-7z" />
             </svg>
-          )}
-        </button>
+          </button>
+        )}
       </div>
     </div>
   );

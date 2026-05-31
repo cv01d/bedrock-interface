@@ -24,10 +24,34 @@ import {
   runWebSearch,
   webSearchTool,
 } from "./tools/webSearch.js";
-import { addMessage, getMessages, linkAttachmentsToMessage } from "../db/repo.js";
+import {
+  addMessage,
+  getContextMessages,
+  linkAttachmentsToMessage,
+} from "../db/repo.js";
+import { modelSupportsTools } from "./models.js";
 import type { Message } from "@chat/shared";
 
 const MAX_TOOL_ROUNDS = 5;
+
+// In-flight streams by chatId, so a Stop request can abort the Bedrock call.
+// Aborting cancels the underlying HTTP stream (stopping token billing); the
+// partial assistant text generated so far is then persisted by streamChat.
+const inflight = new Map<number, AbortController>();
+
+export function stopChat(chatId: number): boolean {
+  const ac = inflight.get(chatId);
+  if (!ac) return false;
+  ac.abort();
+  return true;
+}
+
+function isAbortError(err: unknown): boolean {
+  return (
+    err instanceof Error &&
+    (err.name === "AbortError" || err.name === "TimeoutError")
+  );
+}
 
 // Keep the last `maxMessages`, then drop leading messages that would make the
 // conversation start invalidly (must begin with a real user message, never an
@@ -42,6 +66,22 @@ function trimHistory(messages: Message[], maxMessages: number): Message[] {
     slice = slice.slice(1);
   }
   return slice;
+}
+
+// Non-tool models (e.g. DeepSeek) reject not just a toolConfig but ANY tool
+// content in the request — a toolUse/toolResult block left in the history (from
+// when the chat used a tool-capable model) triggers the same "doesn't support
+// tool use in streaming mode" error. Drop those blocks, then drop any message
+// left with no content so the conversation stays valid.
+function stripToolBlocks(messages: Message[]): Message[] {
+  const out: Message[] = [];
+  for (const m of messages) {
+    const blocks = m.blocks.filter(
+      (b) => b.type !== "toolUse" && b.type !== "toolResult"
+    );
+    if (blocks.length > 0) out.push({ ...m, blocks });
+  }
+  return out;
 }
 
 // Accumulates streamed content blocks keyed by their contentBlockIndex.
@@ -91,18 +131,36 @@ export async function streamChat(opts: {
       : [{ text: opts.systemText }]
     : undefined;
 
+  // Only tool-capable models (Anthropic Claude, Amazon Nova) accept a toolConfig.
+  // Sending tools to any other model (e.g. DeepSeek) makes ConverseStream throw
+  // "This model doesn't support tool use in streaming mode", so gate on the model
+  // here even if the caller asked for tools.
+  const supportsTools = modelSupportsTools(opts.modelId);
   const tools: Tool[] = [];
-  if (opts.includeSearchTool) tools.push(searchHistoryTool);
-  if (opts.includeImageTool) tools.push(generateImageTool);
-  if (opts.includeWebSearchTool) tools.push(webSearchTool);
+  if (supportsTools && opts.includeSearchTool) tools.push(searchHistoryTool);
+  if (supportsTools && opts.includeImageTool) tools.push(generateImageTool);
+  if (supportsTools && opts.includeWebSearchTool) tools.push(webSearchTool);
   if (opts.includeCaching && tools.length > 0) tools.push(cachePoint as Tool);
   const toolConfig: ToolConfiguration | undefined =
     tools.length > 0 ? { tools } : undefined;
 
+  // TEMP diagnostic: confirms whether a toolConfig is being sent for this model.
+  // Remove once the "doesn't support tool use in streaming mode" issue is settled.
+  console.error(
+    `[streamChat] model=${opts.modelId} supportsTools=${supportsTools} ` +
+      `toolCount=${tools.length} hasToolConfig=${!!toolConfig}`
+  );
+
   // Seed the conversation from persisted history (already includes the new
   // user message the route saved before calling us), trimmed to context size.
+  // For non-tool models, also strip any tool blocks left over from earlier turns
+  // (see stripToolBlocks) before trimming, or Bedrock rejects the request.
+  const rawHistory = getContextMessages(opts.chatId);
   const convo: BedrockMessage[] = toBedrockMessages(
-    trimHistory(getMessages(opts.chatId), opts.maxMessages)
+    trimHistory(
+      supportsTools ? rawHistory : stripToolBlocks(rawHistory),
+      opts.maxMessages
+    )
   );
 
   // Cache the conversation prefix too (everything through the latest user
@@ -119,28 +177,36 @@ export async function streamChat(opts: {
   let totalCacheWrite = 0;
   let lastStopReason = "end_turn";
 
+  // Register an abort controller for this chat so a Stop request can cancel the
+  // Bedrock stream. Cleared in the finally below.
+  const ac = new AbortController();
+  inflight.set(opts.chatId, ac);
+  try {
   for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
-    const res = await client.send(
-      new ConverseStreamCommand({
-        modelId: opts.modelId,
-        messages: convo,
-        system,
-        toolConfig,
-        inferenceConfig: {
-          temperature: opts.temperature,
-          maxTokens: opts.maxTokens,
-        },
-      })
-    );
-
     const blocks = new Map<number, AccBlock>();
     let stopReason = "end_turn";
     let roundInput = 0;
     let roundOutput = 0;
     let roundCacheRead = 0;
     let roundCacheWrite = 0;
+    let stopped = false;
 
-    for await (const chunk of res.stream ?? []) {
+    try {
+      const res = await client.send(
+        new ConverseStreamCommand({
+          modelId: opts.modelId,
+          messages: convo,
+          system,
+          toolConfig,
+          inferenceConfig: {
+            temperature: opts.temperature,
+            maxTokens: opts.maxTokens,
+          },
+        }),
+        { abortSignal: ac.signal }
+      );
+
+      for await (const chunk of res.stream ?? []) {
       if (chunk.messageStart) {
         opts.emit({ type: "start" });
       } else if (chunk.contentBlockStart) {
@@ -183,12 +249,44 @@ export async function streamChat(opts: {
         roundCacheRead += u.cacheReadInputTokens ?? 0;
         roundCacheWrite += u.cacheWriteInputTokens ?? 0;
       }
+      }
+    } catch (err) {
+      // A Stop request aborts the Bedrock stream; any other error propagates.
+      if (!isAbortError(err)) throw err;
+      stopped = true;
     }
 
     totalInput += roundInput;
     totalOutput += roundOutput;
     totalCacheRead += roundCacheRead;
     totalCacheWrite += roundCacheWrite;
+
+    // Stopped by the user mid-stream: persist whatever assistant text was
+    // generated so far (marked "stopped") and end the turn here.
+    if (stopped) {
+      lastStopReason = "stopped";
+      const partial: ContentBlock[] = [...blocks.entries()]
+        .sort((a, b) => a[0] - b[0])
+        .map(([, b]) => b)
+        .filter((b) => b.type === "text" && b.text)
+        .map((b) => ({ type: "text", text: b.text }) as ContentBlock);
+      if (partial.length > 0) {
+        const saved = addMessage({
+          chatId: opts.chatId,
+          role: "assistant",
+          blocks: partial,
+          modelId: opts.modelId,
+          stopReason: "stopped",
+          inputTokens: roundInput || null,
+          outputTokens: roundOutput || null,
+          cacheReadTokens: roundCacheRead || null,
+          cacheWriteTokens: roundCacheWrite || null,
+        });
+        opts.emit({ type: "message_saved", message: saved });
+      }
+      break;
+    }
+
     lastStopReason = stopReason;
 
     // Reconstruct the assistant message blocks in index order.
@@ -352,6 +450,10 @@ export async function streamChat(opts: {
       content: toBedrockMessages([savedToolResult])[0]?.content ?? [],
     });
     // loop again so the model can respond using the tool results
+  }
+  } finally {
+    // Only clear if we're still the registered controller for this chat.
+    if (inflight.get(opts.chatId) === ac) inflight.delete(opts.chatId);
   }
 
   return {

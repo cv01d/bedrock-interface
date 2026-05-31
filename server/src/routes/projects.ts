@@ -3,6 +3,7 @@ import {
   createProject,
   deleteProject,
   getProject,
+  listChatsByProject,
   listProjects,
   updateProject,
 } from "../db/repo.js";
@@ -31,6 +32,15 @@ projectsRouter.get("/:id", (req, res) => {
     return;
   }
   res.json(project);
+});
+
+projectsRouter.get("/:id/chats", (req, res) => {
+  const id = Number(req.params.id);
+  if (!getProject(id)) {
+    res.status(404).json({ error: "Project not found" });
+    return;
+  }
+  res.json(listChatsByProject(id));
 });
 
 projectsRouter.put("/:id", (req, res) => {

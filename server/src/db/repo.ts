@@ -2,6 +2,7 @@ import type {
   Chat,
   ChatSummary,
   ContentBlock,
+  FavoriteItem,
   Message,
   Project,
   ProjectSummary,
@@ -279,22 +280,24 @@ interface ChatRow {
   enc_system_prompt_snapshot: Uint8Array | null;
   created_at: string;
   updated_at: string;
+  archived: number;
 }
 
 const SNAPSHOT_DOMAIN = "chats.system_prompt_snapshot";
 const chatAad = (id: number) => `chats:${id}`;
 
-export function listChats(): ChatSummary[] {
+export function listChats(archived = false): ChatSummary[] {
   const rows = db
     .prepare(
-      "SELECT id, project_id, title, model_id, updated_at FROM chats ORDER BY updated_at DESC"
+      "SELECT id, project_id, title, model_id, updated_at, archived FROM chats WHERE archived = ? ORDER BY updated_at DESC"
     )
-    .all() as {
+    .all(archived ? 1 : 0) as {
     id: number;
     project_id: number | null;
     title: string;
     model_id: string;
     updated_at: string;
+    archived: number;
   }[];
   return rows.map((r) => ({
     id: r.id,
@@ -302,6 +305,31 @@ export function listChats(): ChatSummary[] {
     title: r.title,
     modelId: r.model_id,
     updatedAt: r.updated_at,
+    archived: !!r.archived,
+  }));
+}
+
+// All chats attached to a project (archived included), newest first.
+export function listChatsByProject(projectId: number): ChatSummary[] {
+  const rows = db
+    .prepare(
+      "SELECT id, project_id, title, model_id, updated_at, archived FROM chats WHERE project_id = ? ORDER BY updated_at DESC"
+    )
+    .all(projectId) as {
+    id: number;
+    project_id: number | null;
+    title: string;
+    model_id: string;
+    updated_at: string;
+    archived: number;
+  }[];
+  return rows.map((r) => ({
+    id: r.id,
+    projectId: r.project_id,
+    title: r.title,
+    modelId: r.model_id,
+    updatedAt: r.updated_at,
+    archived: !!r.archived,
   }));
 }
 
@@ -329,6 +357,7 @@ export function createChat(
     title: "New chat",
     modelId,
     updatedAt: ts,
+    archived: false,
   };
 }
 
@@ -389,6 +418,7 @@ export function getChat(id: number): Chat | null {
     modelId: r.model_id,
     createdAt: r.created_at,
     updatedAt: r.updated_at,
+    archived: !!r.archived,
     messages,
     costUsd: usage.costUsd,
     inputTokens: usage.inputTokens,
@@ -403,7 +433,7 @@ export function getChatUsage(id: number): ChatUsage {
 
 export function updateChat(
   id: number,
-  patch: { title?: string; modelId?: string }
+  patch: { title?: string; modelId?: string; archived?: boolean }
 ): ChatSummary | null {
   const sets: string[] = [];
   const vals: SqlParam[] = [];
@@ -414,6 +444,10 @@ export function updateChat(
   if (patch.modelId !== undefined) {
     sets.push("model_id = ?");
     vals.push(patch.modelId);
+  }
+  if (patch.archived !== undefined) {
+    sets.push("archived = ?");
+    vals.push(patch.archived ? 1 : 0);
   }
   if (sets.length === 0) return null;
   sets.push("updated_at = ?");
@@ -427,6 +461,7 @@ export function updateChat(
     title: r.title,
     modelId: r.model_id,
     updatedAt: r.updated_at,
+    archived: !!r.archived,
   };
 }
 
@@ -453,6 +488,9 @@ interface MessageRow {
   cache_read_tokens: number | null;
   cache_write_tokens: number | null;
   created_at: string;
+  hidden: number;
+  // Present only on queries that LEFT JOIN favorites (0/1); absent elsewhere.
+  favorite?: number;
 }
 
 const MSG_DOMAIN = "messages.content";
@@ -475,14 +513,94 @@ function rowToMessage(r: MessageRow): Message {
     cacheReadTokens: r.cache_read_tokens,
     cacheWriteTokens: r.cache_write_tokens,
     createdAt: r.created_at,
+    hidden: !!r.hidden,
+    favorite: !!r.favorite,
   };
 }
 
+// Selects every message column plus a computed `favorite` flag.
+const MESSAGE_SELECT = `SELECT m.*, (f.id IS NOT NULL) AS favorite
+  FROM messages m LEFT JOIN favorites f ON f.message_id = m.id`;
+
 export function getMessages(chatId: number): Message[] {
   const rows = db
-    .prepare("SELECT * FROM messages WHERE chat_id = ? ORDER BY seq ASC")
+    .prepare(`${MESSAGE_SELECT} WHERE m.chat_id = ? ORDER BY m.seq ASC`)
     .all(chatId) as unknown as MessageRow[];
   return rows.map(rowToMessage);
+}
+
+export function getMessage(id: number): Message | null {
+  const r = db
+    .prepare(`${MESSAGE_SELECT} WHERE m.id = ?`)
+    .get(id) as MessageRow | undefined;
+  return r ? rowToMessage(r) : null;
+}
+
+// Messages for the model context: drops hidden turns, then strips any tool
+// blocks left orphaned by hiding (a toolUse with no matching toolResult, or a
+// toolResult with no matching toolUse) so the Bedrock request stays valid.
+// Messages emptied by this filtering are removed entirely.
+export function getContextMessages(chatId: number): Message[] {
+  const visible = getMessages(chatId).filter((m) => !m.hidden);
+  const useIds = new Set<string>();
+  const resultIds = new Set<string>();
+  for (const m of visible) {
+    for (const b of m.blocks) {
+      if (b.type === "toolUse") useIds.add(b.toolUseId);
+      else if (b.type === "toolResult") resultIds.add(b.toolUseId);
+    }
+  }
+  const out: Message[] = [];
+  for (const m of visible) {
+    const blocks = m.blocks.filter((b) => {
+      if (b.type === "toolUse") return resultIds.has(b.toolUseId);
+      if (b.type === "toolResult") return useIds.has(b.toolUseId);
+      return true;
+    });
+    if (blocks.length === 0) continue;
+    out.push({ ...m, blocks });
+  }
+  return out;
+}
+
+// Flip a message's "removed from view" flag. Returns the updated message.
+export function setMessageHidden(
+  messageId: number,
+  hidden: boolean
+): Message | null {
+  const row = db
+    .prepare("SELECT chat_id FROM messages WHERE id = ?")
+    .get(messageId) as { chat_id: number } | undefined;
+  if (!row) return null;
+  db.prepare("UPDATE messages SET hidden = ? WHERE id = ?").run(
+    hidden ? 1 : 0,
+    messageId
+  );
+  touchChat(row.chat_id);
+  return getMessage(messageId);
+}
+
+// The seq of the last "real" user prompt — a user message that isn't purely a
+// tool-result round-trip. Regenerate rewinds the chat to just after this.
+export function getLastUserPromptSeq(chatId: number): number | null {
+  const msgs = getMessages(chatId);
+  for (let i = msgs.length - 1; i >= 0; i--) {
+    const m = msgs[i];
+    if (m.role === "user" && !m.blocks.every((b) => b.type === "toolResult")) {
+      return m.seq;
+    }
+  }
+  return null;
+}
+
+// Drop every message after `seq` (used by regenerate to discard the last
+// assistant turn and any tool-result rounds that belonged to it).
+export function deleteMessagesAfterSeq(chatId: number, seq: number): void {
+  db.prepare("DELETE FROM messages WHERE chat_id = ? AND seq > ?").run(
+    chatId,
+    seq
+  );
+  touchChat(chatId);
 }
 
 function nextSeq(chatId: number): number {
@@ -543,6 +661,8 @@ export function addMessage(input: {
     cacheReadTokens: input.cacheReadTokens ?? null,
     cacheWriteTokens: input.cacheWriteTokens ?? null,
     createdAt: ts,
+    hidden: false,
+    favorite: false,
   };
 }
 
@@ -636,6 +756,87 @@ export function getProjectMessagesAfter(
       return { id: r.id, role: r.role, text };
     })
     .filter((m) => m.text.length > 0);
+}
+
+// ---------- Favorites ----------
+
+interface FavoriteRow {
+  id: number;
+  message_id: number;
+  chat_id: number;
+  created_at: string;
+  label: string | null;
+  role: Role;
+  enc_content: Uint8Array | null;
+  title: string;
+}
+
+const FAVORITE_SELECT = `SELECT f.id, f.message_id, f.chat_id, f.created_at, f.label,
+       m.role, m.enc_content, c.title
+  FROM favorites f
+  JOIN messages m ON m.id = f.message_id
+  JOIN chats c ON c.id = f.chat_id`;
+
+function rowToFavorite(r: FavoriteRow): FavoriteItem {
+  const blocks: ContentBlock[] = r.enc_content
+    ? JSON.parse(decrypt(r.enc_content, MSG_DOMAIN, msgAad(r.message_id)))
+    : [];
+  const text = blocks
+    .map((b) => (b.type === "text" ? b.text : ""))
+    .join(" ")
+    .trim();
+  return {
+    id: r.id,
+    messageId: r.message_id,
+    chatId: r.chat_id,
+    chatTitle: r.title,
+    role: r.role,
+    snippet: text.slice(0, 160),
+    label: r.label,
+    createdAt: r.created_at,
+  };
+}
+
+export function listFavorites(): FavoriteItem[] {
+  const rows = db
+    .prepare(`${FAVORITE_SELECT} ORDER BY f.created_at DESC`)
+    .all() as unknown as FavoriteRow[];
+  return rows.map(rowToFavorite);
+}
+
+export function getFavorite(messageId: number): FavoriteItem | null {
+  const r = db
+    .prepare(`${FAVORITE_SELECT} WHERE f.message_id = ?`)
+    .get(messageId) as FavoriteRow | undefined;
+  return r ? rowToFavorite(r) : null;
+}
+
+export function addFavorite(messageId: number): FavoriteItem | null {
+  const row = db
+    .prepare("SELECT chat_id FROM messages WHERE id = ?")
+    .get(messageId) as { chat_id: number } | undefined;
+  if (!row) return null;
+  db.prepare(
+    "INSERT OR IGNORE INTO favorites (message_id, chat_id, created_at) VALUES (?, ?, ?)"
+  ).run(messageId, row.chat_id, now());
+  return getFavorite(messageId);
+}
+
+export function removeFavorite(messageId: number): void {
+  db.prepare("DELETE FROM favorites WHERE message_id = ?").run(messageId);
+}
+
+// Set (or clear, with empty/blank) a favorite's display name.
+export function renameFavorite(
+  messageId: number,
+  label: string
+): FavoriteItem | null {
+  const trimmed = label.trim();
+  db.prepare("UPDATE favorites SET label = ? WHERE message_id = ?").run(
+    trimmed || null,
+    messageId
+  );
+  return getFavorite(messageId);
 }
 
 // ---------- Attachments ----------

@@ -4,19 +4,22 @@ import {
   addMessage,
   createChat,
   deleteChat,
+  deleteMessagesAfterSeq,
   getAttachments,
   getChat,
   getChatUsage,
   getChatRow,
   getChatSnapshot,
+  getLastUserPromptSeq,
   getProject,
   getSettings,
   linkAttachmentsToMessage,
   listChats,
+  setMessageHidden,
   updateChat,
 } from "../db/repo.js";
 import { buildSnapshot, buildSystemText } from "../services/context.js";
-import { streamChat } from "../bedrock/converse.js";
+import { stopChat, streamChat } from "../bedrock/converse.js";
 import { NoCredentialsError } from "../bedrock/client.js";
 import { explainBedrockError } from "../bedrock/errors.js";
 import { imageFormatFor, documentFormatFor } from "../bedrock/convert.js";
@@ -24,8 +27,8 @@ import { openSSE } from "../sse.js";
 
 export const chatsRouter = Router();
 
-chatsRouter.get("/", (_req, res) => {
-  res.json(listChats());
+chatsRouter.get("/", (req, res) => {
+  res.json(listChats(req.query.archived === "true"));
 });
 
 chatsRouter.post("/", (req, res) => {
@@ -56,8 +59,8 @@ chatsRouter.patch("/:id", (req, res) => {
     res.status(404).json({ error: "Chat not found" });
     return;
   }
-  const { title, modelId } = req.body ?? {};
-  res.json(updateChat(id, { title, modelId }));
+  const { title, modelId, archived } = req.body ?? {};
+  res.json(updateChat(id, { title, modelId, archived }));
 });
 
 chatsRouter.delete("/:id", (req, res) => {
@@ -114,6 +117,21 @@ chatsRouter.post("/:id/messages", async (req, res) => {
     updateChat(chatId, { title: text.trim().slice(0, 60) });
   }
 
+  await streamTurn(res, chatRow, {
+    enableTools: body.enableTools !== false,
+    enableCaching: body.enableCaching === true,
+  });
+});
+
+// Runs one streaming turn over an existing chat (whose latest user prompt is
+// already persisted) and pipes SSE events to the client. Shared by the send
+// and regenerate endpoints.
+async function streamTurn(
+  res: Parameters<typeof openSSE>[0],
+  chatRow: NonNullable<ReturnType<typeof getChatRow>>,
+  opts: { enableTools: boolean; enableCaching: boolean }
+): Promise<void> {
+  const chatId = chatRow.id;
   // Assemble system text: frozen snapshot + live project memory + dated preamble.
   const settings = getSettings();
   const project =
@@ -130,9 +148,13 @@ chatsRouter.post("/:id/messages", async (req, res) => {
   // soon as the request body is consumed — long before the client goes away —
   // which would silence the whole stream. res "close" only fires early on a
   // genuine disconnect; on normal completion it fires after the response ends.
+  // Also abort the Bedrock stream so we stop billing tokens for a gone client.
   let aborted = false;
   res.on("close", () => {
-    if (!res.writableFinished) aborted = true;
+    if (!res.writableFinished) {
+      aborted = true;
+      stopChat(chatId);
+    }
   });
 
   try {
@@ -144,13 +166,11 @@ chatsRouter.post("/:id/messages", async (req, res) => {
       temperature: settings.temperature,
       maxTokens: 4096,
       maxMessages: settings.contextSize,
-      includeSearchTool: body.enableTools !== false,
+      includeSearchTool: opts.enableTools,
       includeImageTool:
-        body.enableTools !== false &&
-        settings.defaultImageModelId.trim() !== "",
-      includeWebSearchTool:
-        body.enableTools !== false && settings.hasTavilyApiKey,
-      includeCaching: body.enableCaching === true,
+        opts.enableTools && settings.defaultImageModelId.trim() !== "",
+      includeWebSearchTool: opts.enableTools && settings.hasTavilyApiKey,
+      includeCaching: opts.enableCaching,
       emit: (e) => {
         if (!aborted) sse.send(e);
       },
@@ -180,4 +200,51 @@ chatsRouter.post("/:id/messages", async (req, res) => {
   } finally {
     sse.close();
   }
+}
+
+// Stop an in-flight stream for this chat. The streaming turn persists whatever
+// partial assistant text was generated and emits its done event.
+chatsRouter.post("/:id/stop", (req, res) => {
+  const stopped = stopChat(Number(req.params.id));
+  res.json({ stopped });
+});
+
+// Regenerate the latest assistant turn: discard everything after the last user
+// prompt (hard replace), then stream a fresh response. Only the last turn can
+// be regenerated.
+chatsRouter.post("/:id/regenerate", async (req, res) => {
+  const chatId = Number(req.params.id);
+  const chatRow = getChatRow(chatId);
+  if (!chatRow) {
+    res.status(404).json({ error: "Chat not found" });
+    return;
+  }
+  const seq = getLastUserPromptSeq(chatId);
+  if (seq == null) {
+    res.status(400).json({ error: "Nothing to regenerate." });
+    return;
+  }
+  deleteMessagesAfterSeq(chatId, seq);
+
+  const body = (req.body ?? {}) as { enableTools?: boolean; enableCaching?: boolean };
+  await streamTurn(res, chatRow, {
+    enableTools: body.enableTools !== false,
+    enableCaching: body.enableCaching === true,
+  });
+});
+
+// Toggle a message's "removed from view" flag.
+chatsRouter.patch("/:id/messages/:messageId/hidden", (req, res) => {
+  const chatId = Number(req.params.id);
+  if (!getChatRow(chatId)) {
+    res.status(404).json({ error: "Chat not found" });
+    return;
+  }
+  const hidden = (req.body ?? {}).hidden === true;
+  const updated = setMessageHidden(Number(req.params.messageId), hidden);
+  if (!updated || updated.chatId !== chatId) {
+    res.status(404).json({ error: "Message not found" });
+    return;
+  }
+  res.json(updated);
 });

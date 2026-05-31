@@ -20,6 +20,7 @@ const { settingsRouter } = await import("./routes/settings.js");
 const { modelsRouter } = await import("./routes/models.js");
 const { projectsRouter } = await import("./routes/projects.js");
 const { chatsRouter } = await import("./routes/chats.js");
+const { favoritesRouter } = await import("./routes/favorites.js");
 const { uploadRouter } = await import("./routes/upload.js");
 const { attachmentsRouter } = await import("./routes/attachments.js");
 
@@ -49,6 +50,7 @@ app.use("/api/settings", settingsRouter);
 app.use("/api/models", modelsRouter);
 app.use("/api/projects", projectsRouter);
 app.use("/api/chats", chatsRouter);
+app.use("/api/favorites", favoritesRouter);
 app.use("/api/upload", uploadRouter);
 app.use("/api/attachments", attachmentsRouter);
 

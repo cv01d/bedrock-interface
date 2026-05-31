@@ -1,12 +1,13 @@
 import { useEffect, useState } from "react";
-import type { Project } from "@chat/shared";
+import type { ChatSummary, Project } from "@chat/shared";
 import { useStore } from "../state/store";
 import { api } from "../lib/api";
 
 export function ProjectsView() {
-  const { projects, loadProjects } = useStore();
+  const { projects, loadProjects, openChatAt } = useStore();
   const [active, setActive] = useState<Project | null>(null);
   const [draft, setDraft] = useState<Project | null>(null);
+  const [projectChats, setProjectChats] = useState<ChatSummary[]>([]);
   const [dirty, setDirty] = useState(false);
   const [saving, setSaving] = useState(false);
   const [summarizing, setSummarizing] = useState(false);
@@ -17,9 +18,13 @@ export function ProjectsView() {
   }, [loadProjects]);
 
   const open = async (id: number) => {
-    const p = await api.getProject(id);
+    const [p, chats] = await Promise.all([
+      api.getProject(id),
+      api.listProjectChats(id),
+    ]);
     setActive(p);
     setDraft(p);
+    setProjectChats(chats);
     setDirty(false);
     setBanner(null);
   };
@@ -29,6 +34,7 @@ export function ProjectsView() {
     await loadProjects();
     setActive(p);
     setDraft(p);
+    setProjectChats([]);
     setDirty(false);
   };
 
@@ -166,7 +172,7 @@ export function ProjectsView() {
                 {saving ? "Saving…" : "Save changes"}
               </button>
               <button onClick={summarize} disabled={summarizing}>
-                {summarizing ? "Summarizing…" : "🧠 Regenerate summary"}
+                {summarizing ? "Summarizing…" : "Regenerate summary"}
               </button>
               <div className="spacer" />
               <button className="danger" onClick={remove}>
@@ -178,6 +184,40 @@ export function ProjectsView() {
                 Unsaved changes.
               </p>
             )}
+
+            <div className="field" style={{ marginTop: 24 }}>
+              <label>Chats in this project ({projectChats.length})</label>
+              {projectChats.length === 0 ? (
+                <div className="muted">No chats in this project yet.</div>
+              ) : (
+                <div className="fav-rows">
+                  {projectChats.map((c) => (
+                    <div
+                      key={c.id}
+                      className="fav-row"
+                      role="button"
+                      tabIndex={0}
+                      title="Open this chat"
+                      onClick={() => openChatAt(c.id, null)}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter" || e.key === " ") {
+                          e.preventDefault();
+                          openChatAt(c.id, null);
+                        }
+                      }}
+                      style={{ cursor: "pointer" }}
+                    >
+                      <span className="fav-main">
+                        <span className="fav-name">{c.title}</span>
+                      </span>
+                      {c.archived && (
+                        <span className="chat-badge">Archived</span>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
           </div>
         )}
       </section>

@@ -1,7 +1,12 @@
 import { useEffect, useState } from "react";
-import type { AttachmentInfo, ContentBlock, Message } from "@chat/shared";
+import type {
+  AttachmentInfo,
+  ContentBlock,
+  Message,
+  SSEEvent,
+} from "@chat/shared";
 import { useStore } from "../state/store";
-import { api, streamMessage } from "../lib/api";
+import { api, streamMessage, streamRegenerate } from "../lib/api";
 import { MessageList } from "../components/MessageList";
 import { Composer } from "../components/Composer";
 
@@ -15,6 +20,9 @@ export function ChatView() {
     setSelectedModelId,
     loadChats,
     loadProjects,
+    loadFavorites,
+    pendingChatOpen,
+    clearPendingChatOpen,
     settings,
     setView,
   } = useStore();
@@ -27,6 +35,9 @@ export function ChatView() {
   const [toolStatus, setToolStatus] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [banner, setBanner] = useState<string | null>(null);
+  const [highlightMessageId, setHighlightMessageId] = useState<number | null>(
+    null
+  );
   const [usage, setUsage] = useState({
     costUsd: 0,
     inputTokens: 0,
@@ -40,7 +51,8 @@ export function ChatView() {
   useEffect(() => {
     loadChats();
     loadProjects();
-  }, [loadChats, loadProjects]);
+    loadFavorites();
+  }, [loadChats, loadProjects, loadFavorites]);
 
   const credsMissing =
     !settings?.hasAwsAccessKeyId || !settings?.hasAwsSecretAccessKey;
@@ -157,6 +169,8 @@ export function ChatView() {
       cacheReadTokens: null,
       cacheWriteTokens: null,
       createdAt: new Date().toISOString(),
+      hidden: false,
+      favorite: false,
     };
     setMessages((prev) => [...prev, optimistic]);
     setStreamingText("");
@@ -170,69 +184,141 @@ export function ChatView() {
         enableTools: model?.supportsTools ?? false,
         enableCaching: model?.supportsCaching ?? false,
       },
-      (event) => {
-        switch (event.type) {
-          case "start":
-            setStreamingText("");
-            break;
-          case "delta":
-            setStreamingText((prev) => (prev ?? "") + event.text);
-            break;
-          case "tool_call_start":
-            setToolStatus(
-              event.name === "generate_image"
-                ? "🎨 Generating image…"
-                : event.name === "web_search"
-                  ? "🌐 Searching the web…"
-                  : "🔎 Searching chat history…"
-            );
-            break;
-          case "tool_result":
-            setToolStatus(
-              event.name === "generate_image"
-                ? event.resultCount > 0
-                  ? "🎨 Image generated"
-                  : "🎨 Image generation failed"
-                : event.name === "web_search"
-                  ? `🌐 Web search → ${event.resultCount} result${
-                      event.resultCount === 1 ? "" : "s"
-                    }`
-                  : `🔎 History search → ${event.resultCount} result${
-                      event.resultCount === 1 ? "" : "s"
-                    }`
-            );
-            break;
-          case "message_saved":
-            setMessages((prev) => {
-              const next = [...prev, event.message];
-              return next;
-            });
-            setStreamingText(null);
-            setToolStatus(null);
-            break;
-          case "done":
-            setBusy(false);
-            setStreamingText(null);
-            setToolStatus(null);
-            setUsage({
-              costUsd: event.chatCostUsd,
-              inputTokens: event.chatInputTokens,
-              outputTokens: event.chatOutputTokens,
-              cacheReadTokens: event.cacheReadTokens,
-              cacheWriteTokens: event.cacheWriteTokens,
-            });
-            loadChats();
-            break;
-          case "error":
-            setBusy(false);
-            setStreamingText(null);
-            setToolStatus(null);
-            setBanner(event.message);
-            break;
-        }
-      }
+      handleStreamEvent
     );
   };
+
+  // Shared SSE handler for both new messages and regeneration.
+  const handleStreamEvent = (event: SSEEvent) => {
+    switch (event.type) {
+      case "start":
+        setStreamingText("");
+        break;
+      case "delta":
+        setStreamingText((prev) => (prev ?? "") + event.text);
+        break;
+      case "tool_call_start":
+        setToolStatus(
+          event.name === "generate_image"
+            ? "🎨 Generating image…"
+            : event.name === "web_search"
+              ? "🌐 Searching the web…"
+              : "🔎 Searching chat history…"
+        );
+        break;
+      case "tool_result":
+        setToolStatus(
+          event.name === "generate_image"
+            ? event.resultCount > 0
+              ? "🎨 Image generated"
+              : "🎨 Image generation failed"
+            : event.name === "web_search"
+              ? `🌐 Web search → ${event.resultCount} result${
+                  event.resultCount === 1 ? "" : "s"
+                }`
+              : `🔎 History search → ${event.resultCount} result${
+                  event.resultCount === 1 ? "" : "s"
+                }`
+        );
+        break;
+      case "message_saved":
+        setMessages((prev) => [...prev, event.message]);
+        setStreamingText(null);
+        setToolStatus(null);
+        break;
+      case "done":
+        setBusy(false);
+        setStreamingText(null);
+        setToolStatus(null);
+        setUsage({
+          costUsd: event.chatCostUsd,
+          inputTokens: event.chatInputTokens,
+          outputTokens: event.chatOutputTokens,
+          cacheReadTokens: event.cacheReadTokens,
+          cacheWriteTokens: event.cacheWriteTokens,
+        });
+        loadChats();
+        loadFavorites();
+        break;
+      case "error":
+        setBusy(false);
+        setStreamingText(null);
+        setToolStatus(null);
+        setBanner(event.message);
+        break;
+    }
+  };
+
+  // Stop the in-flight stream. The server persists the partial response and
+  // emits its message_saved + done events over the open connection.
+  const onStop = () => {
+    if (activeChatId) api.stopChat(activeChatId).catch(() => {});
+  };
+
+  // Regenerate the latest assistant turn (hard replace). Drops the trailing
+  // turn locally, then re-streams from the last user prompt.
+  const onRegenerate = () => {
+    if (!activeChatId || busy) return;
+    setMessages((prev) => {
+      let cut = prev.length;
+      for (let i = prev.length - 1; i >= 0; i--) {
+        const m = prev[i];
+        if (
+          m.role === "user" &&
+          !m.blocks.every((b) => b.type === "toolResult")
+        ) {
+          cut = i + 1;
+          break;
+        }
+      }
+      return prev.slice(0, cut);
+    });
+    setBusy(true);
+    setBanner(null);
+    setStreamingText("");
+    const model = models.find((m) => m.id === selectedModelId);
+    streamRegenerate(
+      activeChatId,
+      {
+        enableTools: model?.supportsTools ?? false,
+        enableCaching: model?.supportsCaching ?? false,
+      },
+      handleStreamEvent
+    );
+  };
+
+  const onToggleFavorite = async (messageId: number, favorite: boolean) => {
+    if (favorite) await api.addFavorite(messageId);
+    else await api.removeFavorite(messageId);
+    setMessages((prev) =>
+      prev.map((m) => (m.id === messageId ? { ...m, favorite } : m))
+    );
+    loadFavorites();
+  };
+
+  const onToggleHidden = async (messageId: number, hidden: boolean) => {
+    if (!activeChatId) return;
+    await api.setMessageHidden(activeChatId, messageId, hidden);
+    setMessages((prev) =>
+      prev.map((m) => (m.id === messageId ? { ...m, hidden } : m))
+    );
+  };
+
+  // Honor a cross-view request to open a chat (e.g. from the Favorites tab):
+  // select the chat, then flash the target turn.
+  useEffect(() => {
+    if (!pendingChatOpen) return;
+    const { chatId, messageId } = pendingChatOpen;
+    clearPendingChatOpen();
+    (async () => {
+      await selectChat(chatId);
+      if (messageId != null) {
+        setHighlightMessageId(null);
+        setTimeout(() => setHighlightMessageId(messageId), 0);
+      }
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pendingChatOpen]);
 
   return (
     <div className="layout">
@@ -294,6 +380,21 @@ export function ChatView() {
                   ✎
                 </button>
                 <button
+                  title="Archive chat"
+                  style={{ border: "none", background: "none", padding: 2 }}
+                  onClick={async (e) => {
+                    e.stopPropagation();
+                    await api.setChatArchived(c.id, true);
+                    loadChats();
+                  }}
+                >
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                    <rect x="3" y="4" width="18" height="4" rx="1" />
+                    <path d="M5 8v11a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V8" />
+                    <path d="M10 12h4" />
+                  </svg>
+                </button>
+                <button
                   className="danger"
                   title="Delete chat"
                   style={{ border: "none", background: "none", padding: 2 }}
@@ -336,6 +437,11 @@ export function ChatView() {
           streamingText={streamingText}
           toolStatus={toolStatus}
           models={models}
+          busy={busy}
+          highlightMessageId={highlightMessageId}
+          onToggleHidden={onToggleHidden}
+          onToggleFavorite={onToggleFavorite}
+          onRegenerate={onRegenerate}
         />
 
         <Composer
@@ -346,6 +452,7 @@ export function ChatView() {
           projectId={currentProjectId}
           onSelectProject={setNewChatProjectId}
           onSend={onSend}
+          onStop={onStop}
           onSummarize={onSummarize}
           busy={busy}
           canSummarize={currentProjectId != null}

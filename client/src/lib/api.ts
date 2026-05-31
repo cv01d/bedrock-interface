@@ -2,7 +2,9 @@ import type {
   AttachmentInfo,
   Chat,
   ChatSummary,
+  FavoriteItem,
   ImageModelInfo,
+  Message,
   ModelInfo,
   Project,
   ProjectSummary,
@@ -52,6 +54,8 @@ export const api = {
       body: JSON.stringify({ name }),
     }),
   getProject: (id: number) => jsonFetch<Project>(`/api/projects/${id}`),
+  listProjectChats: (id: number) =>
+    jsonFetch<ChatSummary[]>(`/api/projects/${id}/chats`),
   updateProject: (id: number, patch: Partial<Project>) =>
     jsonFetch<Project>(`/api/projects/${id}`, {
       method: "PUT",
@@ -66,20 +70,53 @@ export const api = {
     ),
 
   // Chats
-  listChats: () => jsonFetch<ChatSummary[]>("/api/chats"),
+  listChats: (archived = false) =>
+    jsonFetch<ChatSummary[]>(`/api/chats${archived ? "?archived=true" : ""}`),
   createChat: (modelId: string, projectId: number | null) =>
     jsonFetch<ChatSummary>("/api/chats", {
       method: "POST",
       body: JSON.stringify({ modelId, projectId }),
     }),
   getChat: (id: number) => jsonFetch<Chat>(`/api/chats/${id}`),
-  updateChat: (id: number, patch: { title?: string; modelId?: string }) =>
+  updateChat: (
+    id: number,
+    patch: { title?: string; modelId?: string; archived?: boolean }
+  ) =>
     jsonFetch<ChatSummary>(`/api/chats/${id}`, {
       method: "PATCH",
       body: JSON.stringify(patch),
     }),
+  setChatArchived: (id: number, archived: boolean) =>
+    jsonFetch<ChatSummary>(`/api/chats/${id}`, {
+      method: "PATCH",
+      body: JSON.stringify({ archived }),
+    }),
   deleteChat: (id: number) =>
     jsonFetch<void>(`/api/chats/${id}`, { method: "DELETE" }),
+  stopChat: (id: number) =>
+    jsonFetch<{ stopped: boolean }>(`/api/chats/${id}/stop`, {
+      method: "POST",
+    }),
+  setMessageHidden: (chatId: number, messageId: number, hidden: boolean) =>
+    jsonFetch<Message>(`/api/chats/${chatId}/messages/${messageId}/hidden`, {
+      method: "PATCH",
+      body: JSON.stringify({ hidden }),
+    }),
+
+  // Favorites
+  listFavorites: () => jsonFetch<FavoriteItem[]>("/api/favorites"),
+  addFavorite: (messageId: number) =>
+    jsonFetch<FavoriteItem>("/api/favorites", {
+      method: "POST",
+      body: JSON.stringify({ messageId }),
+    }),
+  renameFavorite: (messageId: number, label: string) =>
+    jsonFetch<FavoriteItem>(`/api/favorites/${messageId}`, {
+      method: "PATCH",
+      body: JSON.stringify({ label }),
+    }),
+  removeFavorite: (messageId: number) =>
+    jsonFetch<void>(`/api/favorites/${messageId}`, { method: "DELETE" }),
 
   // Upload (multipart, not JSON)
   upload: async (file: File): Promise<AttachmentInfo> => {
@@ -94,18 +131,18 @@ export const api = {
   },
 };
 
-// Streams a chat message response, invoking onEvent for each SSE event.
-// Returns an abort function.
-export function streamMessage(
-  chatId: number,
-  body: SendMessageBody,
+// POSTs to an SSE endpoint and invokes onEvent for each event. Returns an
+// abort function. Shared by streamMessage and streamRegenerate.
+function streamSSE(
+  url: string,
+  body: unknown,
   onEvent: (event: SSEEvent) => void
 ): () => void {
   const controller = new AbortController();
 
   (async () => {
     try {
-      const res = await fetch(`/api/chats/${chatId}/messages`, {
+      const res = await fetch(url, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body),
@@ -159,4 +196,22 @@ export function streamMessage(
   })();
 
   return () => controller.abort();
+}
+
+// Streams a new chat message response. Returns an abort function.
+export function streamMessage(
+  chatId: number,
+  body: SendMessageBody,
+  onEvent: (event: SSEEvent) => void
+): () => void {
+  return streamSSE(`/api/chats/${chatId}/messages`, body, onEvent);
+}
+
+// Regenerates the latest assistant turn. Returns an abort function.
+export function streamRegenerate(
+  chatId: number,
+  body: { enableTools?: boolean; enableCaching?: boolean },
+  onEvent: (event: SSEEvent) => void
+): () => void {
+  return streamSSE(`/api/chats/${chatId}/regenerate`, body, onEvent);
 }
