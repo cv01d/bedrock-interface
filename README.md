@@ -9,7 +9,16 @@ All chat history and credentials are encrypted at rest in SQLite.
 - **Any Bedrock chat model** — in-region models and cross-region inference profiles,
   with running per-chat cost and token tracking.
 - **Projects** — group chats under a system prompt + project data, with a rolling
-  memory summary the model carries across chats.
+  memory summary the model carries across chats. The project panel lists every
+  chat in the project (archived ones included) and opens them in one click.
+- **Conversation controls** — **Stop** a streaming response (the partial reply is
+  kept), **Regenerate** the latest assistant turn, and **Remove from view** any turn
+  (hidden from both the transcript and the model's context, but never deleted from
+  history).
+- **Favorites** — bookmark any turn with the 🔖 button. Favorites get their own tab,
+  are renameable, and jump you straight back to the turn in its original chat.
+- **Archive** — move chats out of the main list into a separate Archived tab to keep
+  the active list uncluttered; unarchive (or delete) them anytime.
 - **Attachments** — upload images (vision) and documents (pdf/csv/docx/xlsx/…);
   images render inline in the transcript.
 - **Image generation** — `generate_image` tool backed by a Bedrock image model
@@ -89,7 +98,7 @@ to use in the Bedrock console.
 
 - `shared/` — TypeScript types shared by server and client
 - `server/` — Express API, SQLite + encryption, Bedrock integration, summarizer
-- `client/` — React UI (Chat / Projects / Settings views)
+- `client/` — React UI (Chat / Projects / Favorites / Archived / Settings views)
 - `server/data/` — SQLite DB + uploaded attachments (gitignored)
 
 Note: Pricing and tokens may vary per chat and/or model. It is ok to use as a guide for estimating, but do not rely on it.
